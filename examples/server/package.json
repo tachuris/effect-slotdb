@@ -1,0 +1,18 @@
+{
+  "name": "example-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "client": "bun src/client.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@tachuris/effect-slotdb": "workspace:*",
+    "@tachuris/effect-slotdb-sqlite": "workspace:*",
+    "effect": "catalog:",
+    "example-chain": "workspace:*"
+  }
+}

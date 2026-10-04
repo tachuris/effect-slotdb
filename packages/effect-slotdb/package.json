@@ -1,0 +1,78 @@
+{
+  "name": "@tachuris/effect-slotdb",
+  "version": "0.1.2",
+  "description": "A replicated store for Effect with field identities derived from a schema migration chain.",
+  "keywords": [
+    "crud",
+    "effect",
+    "replication",
+    "sqlite",
+    "sync"
+  ],
+  "homepage": "https://github.com/tachuris/effect-slotdb/tree/main/packages/effect-slotdb#readme",
+  "bugs": "https://github.com/tachuris/effect-slotdb/issues",
+  "license": "MIT",
+  "author": "Ricardo Stuven <rstuven@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tachuris/effect-slotdb.git",
+    "directory": "packages/effect-slotdb"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./migration": "./src/migration/index.ts",
+    "./replication": "./src/replication/index.ts",
+    "./changes": "./src/changes/index.ts",
+    "./records": "./src/records/index.ts",
+    "./artifact": "./src/artifact.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./migration": {
+        "types": "./dist/migration.d.ts",
+        "import": "./dist/migration.js"
+      },
+      "./replication": {
+        "types": "./dist/replication.d.ts",
+        "import": "./dist/replication.js"
+      },
+      "./changes": {
+        "types": "./dist/changes.d.ts",
+        "import": "./dist/changes.js"
+      },
+      "./records": {
+        "types": "./dist/records.d.ts",
+        "import": "./dist/records.js"
+      },
+      "./artifact": {
+        "types": "./dist/artifact.d.ts",
+        "import": "./dist/artifact.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "import": "./dist/testing.js"
+      }
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "pack": "vp pack"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "effect": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0"
+  }
+}

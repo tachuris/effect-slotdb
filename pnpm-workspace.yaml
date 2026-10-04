@@ -1,0 +1,30 @@
+packages:
+  - packages/*
+  - examples/*
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+  multiline-ts: true
+catalog:
+  '@effect/platform-bun': 4.0.0
+  '@effect/sql-sqlite-bun': 4.0.0
+  '@effect/sql-sqlite-node': 4.0.0
+  '@effect/vitest': 4.0.0
+  '@types/node': ^26.1.1
+  dependency-cruiser: ^18.1.0
+  eslint-plugin-sql: ^3.4.1
+  effect: 4.0.0
+  typescript: ^6.0.3
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vite-plus: ^1.0.0
+  # Use the GitHub source for the asynchronous OPFS VFS.
+  wa-sqlite: github:rhashimoto/wa-sqlite#v1.1.1
+overrides:
+  vite: 'catalog:'
+  # Keep Effect test helpers on the Vitest version that Vite+ runs.
+  vitest: 5.0.1
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: '*'

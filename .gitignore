@@ -1,0 +1,13 @@
+node_modules/
+coverage/
+dist/
+.local/
+*.local
+*.tgz
+*.log
+.DS_Store
+
+# SQLite files
+*.db
+*.db-shm
+*.db-wal

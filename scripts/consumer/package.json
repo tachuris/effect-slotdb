@@ -1,0 +1,5 @@
+{
+  "name": "consumer-check",
+  "private": true,
+  "type": "module"
+}

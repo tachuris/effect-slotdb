@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    # The npm trusted publisher accepts tokens only from this environment.
+    environment: npm
+    permissions:
+      # Creates the GitHub release.
+      contents: write
+      # npm trusted publishing and provenance.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@3754dd7dbdb32bd8f6d28b6043de13ad3a75f21f # v1.21.1
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Check that the tag matches the package versions
+        run: |
+          for manifest in packages/*/package.json; do
+            version="v$(node -p "require('./$manifest').version")"
+            if [ "$version" != "$GITHUB_REF_NAME" ]; then
+              echo "::error file=$manifest::version $version does not match tag $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
+
+      - run: vp run build
+
+      # Nothing goes live until a maintainer approves each staged version with 2FA.
+      # pnpm stages in dependency order and skips versions that npm already has.
+      - name: Stage on npm
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then dist_tag=next; else dist_tag=latest; fi
+          pnpm stage publish -r --no-git-checks --tag "$dist_tag"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gh reads the notes from the local annotated tag object.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag "${prerelease[@]}"

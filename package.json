@@ -1,0 +1,31 @@
+{
+  "name": "effect-slotdb",
+  "version": "0.1.2",
+  "private": true,
+  "description": "A replicated store for Effect with a SQLite implementation.",
+  "keywords": [],
+  "license": "MIT",
+  "author": "Ricardo Stuven <rstuven@gmail.com>",
+  "type": "module",
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test",
+    "arch": "bunx depcruise packages examples -T err-long",
+    "build": "vp run -r pack",
+    "bump": "node scripts/bump-version.ts",
+    "check:consumer": "bash scripts/check-consumer.sh",
+    "schema:lock": "bun examples/chain/scripts/lock.ts",
+    "schema:ddl": "bun examples/chain/scripts/ddl.ts",
+    "example:cli": "vp run --filter example-bun start",
+    "example:server": "vp run --filter example-server start",
+    "example:web": "vp run --filter example-web dev"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "dependency-cruiser": "catalog:",
+    "eslint-plugin-sql": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "packageManager": "pnpm@11.13.0"
+}

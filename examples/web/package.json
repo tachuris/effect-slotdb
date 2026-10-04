@@ -1,0 +1,19 @@
+{
+  "name": "example-web",
+  "private": true,
+  "description": "Browser example: a wasm-backed page that syncs through the relay.",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build"
+  },
+  "dependencies": {
+    "@tachuris/effect-slotdb": "workspace:^",
+    "@tachuris/effect-slotdb-sqlite": "workspace:^",
+    "effect": "catalog:",
+    "example-chain": "workspace:^"
+  },
+  "devDependencies": {
+    "vite": "catalog:"
+  }
+}

@@ -1,0 +1,35 @@
+
+e231a13f9b33b5d7	entity labels	table=labels
+394c3fccc4c4b04d	String|lww	(born 0001 as "name", column=name, lww)
+3b9a0a4ec56cd523	String|fww|key=1	(born 0001 as "id", column=id, fww, key=1)
+4eb4c229cc8b1055	String|min|framework=created	(born 0001 as "createdAt", column=createdAt, min, framework:created)
+6b61e2a763ed4357	(Null|String)|lww	(born 0001 as "color", column=color, lww)
+d9319bb8ba28495a	(Null|String)|min|framework=tombstone	(born 0001 as "deletedAt", column=deletedAt, min, framework:tombstone)
+
+0943e8eab9a4c2f5	entity peers	table=peers
+1cf2409aeb155834	(Null|Number)|lww|local	(born 0000 as "pulledThrough", column=pulledThrough, lww, local)
+6414f8087dac9a1c	String|fww	(born 0000 as "registeredAt", column=registeredAt, fww)
+be6ee8f60dff18d0	String|fww|key=1	(born 0000 as "peerId", column=peerId, fww, key=1)
+d0d65339ae0a000f	(Null|String)|lww|local	(born 0000 as "chainPosition", column=chainPosition, lww, local)
+d9319cb8ba284b0d	(Null|String)|min|framework=tombstone	(born 0000 as "deletedAt", column=deletedAt, min, framework:tombstone)
+ef3c215ebdc1b11f	String|fww|key=2	(born 0000 as "accountId", column=accountId, fww, key=2)
+f17a326f6213df89	(Null|String)|lww|local	(born 0000 as "lastSeenAt", column=lastSeenAt, lww, local)
+f7cee589c8a7f58f	(Null|String)|lww	(born 0000 as "label", column=label, lww)
+
+7d03aaba5389a9c6	entity syncMeta	table=syncMeta
+18c4b316adb93241	Number|lww|local	(born 0000 as "pushCursor", column=pushCursor, lww, local)
+3b9a094ec56cd370	Number|fww|key=1|local	(born 0000 as "id", column=id, fww, key=1, local)
+7c40c94dead0d1f0	Number|lww|local	(born 0000 as "pullCursor", column=pullCursor, lww, local)
+be6ee8f60dff18d0	String|lww|local	(born 0000 as "peerId", column=peerId, lww, local)
+
+860db349ce5ade12	entity tasks	table=tasks
+1bd41b5d477d3fc1	(Literal|Literal)|or	(born 0001 as "completed", column=completed, or)
+2ada1be2fb469873	(Null|String)|union	(born 0001 as "tags", column=tags, union)
+3b9a0a4ec56cd523	String|fww|key=1	(born 0001 as "id", column=id, fww, key=1)
+3e382ef9017a038c	String|lww	(born 0001 as "title", column=title, lww)
+4eb4c229cc8b1055	String|min|framework=created	(born 0001 as "createdAt", column=createdAt, min, framework:created)
+6f23404898ed6dda	(String|Undefined)|lww	(born 0002 as "dueAt", column=dueAt, lww)
+7ac6f6122df8f012	(Literal|Literal|Literal)|lww	(born 0001 as "kind", column=kind, lww)
+92156bba9b003f89	String|lww	(born 0001 as "slug", column=slug, lww)
+a50e2e52e1708355	(Null|String)|lww|local	(born 0001 as "notes", column=notes, lww, local)
+d9319bb8ba28495a	(Null|String)|min|framework=tombstone	(born 0001 as "deletedAt", column=deletedAt, min, framework:tombstone)

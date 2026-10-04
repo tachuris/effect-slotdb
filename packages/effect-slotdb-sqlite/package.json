@@ -1,0 +1,84 @@
+{
+  "name": "@tachuris/effect-slotdb-sqlite",
+  "version": "0.1.2",
+  "description": "The SQLite dialect for @tachuris/effect-slotdb: DDL and migrations derived from a migration chain.",
+  "keywords": [
+    "bun",
+    "effect",
+    "sqlite",
+    "wasm"
+  ],
+  "homepage": "https://github.com/tachuris/effect-slotdb#readme",
+  "bugs": "https://github.com/tachuris/effect-slotdb/issues",
+  "license": "MIT",
+  "author": "Ricardo Stuven <rstuven@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tachuris/effect-slotdb.git",
+    "directory": "packages/effect-slotdb-sqlite"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bun": "./src/bun.ts",
+    "./wasm": "./src/wasm.ts",
+    "./artifact": "./src/artifact.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./bun": {
+        "types": "./dist/bun.d.ts",
+        "import": "./dist/bun.js"
+      },
+      "./wasm": {
+        "types": "./dist/wasm.d.ts",
+        "import": "./dist/wasm.js"
+      },
+      "./artifact": {
+        "types": "./dist/artifact.d.ts",
+        "import": "./dist/artifact.js"
+      },
+      "./testing": {
+        "types": "./dist/testing.d.ts",
+        "import": "./dist/testing.js"
+      }
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "pack": "vp pack"
+  },
+  "dependencies": {
+    "wa-sqlite": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@tachuris/effect-slotdb": "workspace:^",
+    "effect": "catalog:",
+    "wa-sqlite": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0",
+    "@effect/sql-sqlite-node": "4.0.0",
+    "@tachuris/effect-slotdb": "workspace:^",
+    "effect": "4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@effect/sql-sqlite-bun": {
+      "optional": true
+    },
+    "@effect/sql-sqlite-node": {
+      "optional": true
+    }
+  }
+}

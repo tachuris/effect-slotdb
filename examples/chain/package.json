@@ -1,0 +1,21 @@
+{
+  "name": "example-chain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lock": "bun scripts/lock.ts",
+    "ddl": "bun scripts/ddl.ts"
+  },
+  "dependencies": {
+    "@tachuris/effect-slotdb": "workspace:*",
+    "@tachuris/effect-slotdb-sqlite": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:"
+  }
+}
