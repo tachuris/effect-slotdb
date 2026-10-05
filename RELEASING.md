@@ -10,10 +10,10 @@ git commit -am 'chore(release): v0.2.0'
 git tag -a v0.2.0 -m 'Release notes'   # each -m adds a paragraph to the release notes
 git push --follow-tags
 # after the workflow finishes:
-pnpm stage approve       # pick @tachuris/effect-slotdb first, then the SQLite package
+pnpm stage approve <id>  # @tachuris/effect-slotdb first, then the SQLite package
 ```
 
-The workflow runs the CI checks and confirms that the tag matches both package versions. Then it builds the packages, stages them on npm, and creates a GitHub release from the tag message. A staged version stays invisible to installs until you approve it with 2FA, through `pnpm stage approve` or on the package page at npmjs.com. A version with a prerelease suffix publishes under the `next` dist tag. pnpm stages `@tachuris/effect-slotdb` before `@tachuris/effect-slotdb-sqlite` and skips any version that npm already has, so a failed workflow can run again.
+The workflow runs the CI checks and confirms that the tag matches both package versions. Then it builds the packages, stages them on npm, and creates a GitHub release from the tag message. A staged version stays invisible to installs until you approve it with 2FA, through `pnpm stage approve` or on the [Staged Packages](https://www.npmjs.com/settings/~/staged-packages) page at npmjs.com. The summary page of the workflow run lists the approve commands with their stage ids. A version with a prerelease suffix publishes under the `next` dist tag. pnpm stages `@tachuris/effect-slotdb` before `@tachuris/effect-slotdb-sqlite` and skips any version that npm already has, so a failed workflow can run again.
 
 To test the packed tarballs locally, run `vp run build`, then `vp run check:consumer`. The script installs both tarballs into a clean project, typechecks every entry point, and loads all entry points except `./bun` in Node.
 

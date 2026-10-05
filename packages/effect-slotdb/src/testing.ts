@@ -22,6 +22,7 @@ import * as apply from './replication/sql/apply.ts'
 import * as changes from './replication/sql/changes.ts'
 import * as roster from './replication/sql/peer-roster.ts'
 import * as purge from './replication/sql/purge.ts'
+import * as counterpartSyncState from './replication/sql/counterpart-sync-state.ts'
 import * as peerSyncState from './replication/sql/peer-sync-state.ts'
 
 const migration0000 = migration.SchemaIndex.seed({
@@ -176,6 +177,10 @@ export const boundTo = (index: migration.SchemaIndex) => {
     listPeers: bound(roster.listPeers),
     evictPeer: bound(roster.evictPeer),
     everyPeerReached: bound(roster.everyPeerReached),
+    getOrCreateCounterpartSyncCursors: bound(
+      counterpartSyncState.getOrCreateCounterpartSyncCursors,
+    ),
+    setCounterpartSyncCursors: bound(counterpartSyncState.setCounterpartSyncCursors),
     getSelfSyncPosition: bound(peerSyncState.getSelfSyncPosition),
     getPeerSyncCursors: bound(peerSyncState.getPeerSyncCursors),
     setPeerSyncCursors: bound(peerSyncState.setPeerSyncCursors),

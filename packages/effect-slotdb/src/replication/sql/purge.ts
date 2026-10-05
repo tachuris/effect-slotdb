@@ -6,6 +6,7 @@ import { DEAD_LETTER_TABLE, OVERFLOW_TABLE, STAMPS_TABLE } from '../../migration
 import { listPeers } from './peer-roster.ts'
 import { PEER_ROSTER_ENTITY } from '../entities.ts'
 import { mapStorageErrorMessage, StorageError } from '../../errors.ts'
+import { getCounterpartPushPositions } from './counterpart-sync-state.ts'
 import { getSelfSyncPosition } from './peer-sync-state.ts'
 
 /** Counts removed and retained rows and identifies peers blocking removal. */
@@ -19,6 +20,8 @@ export interface PurgeReport {
    * observations block removal until observed or evicted.
    */
   readonly blockedBy: ReadonlyArray<string>
+  /** Counterparts missing retained deletions. Omitted for singleton cursor chains. */
+  readonly blockedCounterparts?: ReadonlyArray<string>
   /** Whether unpushed writes on this peer prevent row removal. */
   readonly selfBehind: boolean
   /** The number of registered peers. An empty roster prevents removal. */
@@ -40,19 +43,29 @@ export const purgeTombstoned = (
   Effect.gen(function* () {
     const roster = yield* listPeers(sql, index, accountId)
     const self = yield* getSelfSyncPosition(sql, index)
+    const counterparts = yield* getCounterpartPushPositions(sql, index)
+    const pushPosition =
+      counterparts === undefined
+        ? (self?.pushCursor ?? 0)
+        : counterparts.length === 0
+          ? 0
+          : Math.min(...counterparts.map(c => c.pushCursor))
     const rosterEntityId = index.entity(PEER_ROSTER_ENTITY).id
 
     // Compare remote pull positions and the local push position in this store's sequence.
     // Unpushed local tombstones must remain until another peer receives the deletion.
     const positions = roster.map(entry => ({
       peerId: entry.peerId,
-      position: entry.peerId === self?.peerId ? self.pushCursor : entry.pulledThrough,
+      position: entry.peerId === self?.peerId ? pushPosition : entry.pulledThrough,
     }))
 
     const watermark =
       positions.length === 0 || positions.some(p => p.position === null)
         ? -1
-        : Math.min(...positions.map(p => p.position!))
+        : Math.min(
+            ...positions.map(p => p.position!),
+            ...(counterparts === undefined ? [] : [pushPosition]),
+          )
 
     let purged = 0
     let retained = 0
@@ -85,10 +98,22 @@ export const purgeTombstoned = (
       purged,
       retained,
       blockedBy: behind.filter(p => p.peerId !== self?.peerId).map(p => p.peerId),
-      selfBehind: behind.some(p => p.peerId === self?.peerId),
+      selfBehind:
+        behind.some(p => p.peerId === self?.peerId) ||
+        (retained > 0 && counterparts !== undefined && pushPosition < highestRetained),
+      ...(counterparts === undefined
+        ? {}
+        : {
+            blockedCounterparts:
+              retained === 0
+                ? []
+                : counterparts
+                    .filter(c => c.pushCursor < highestRetained)
+                    .map(c => c.counterpartId),
+          }),
       rosterSize: roster.length,
     }
-  }).pipe(mapStorageErrorMessage('Failed to purge tombstoned rows'))
+  }).pipe(sql.withTransaction, mapStorageErrorMessage('Failed to purge tombstoned rows'))
 
 /**
  * Lists tombstoned rows with their latest slot sequence. Excludes unstamped tombstones

@@ -43,9 +43,24 @@ jobs:
       # Nothing goes live until a maintainer approves each staged version with 2FA.
       # pnpm stages in dependency order and skips versions that npm already has.
       - name: Stage on npm
+        # `shell: bash` adds pipefail, so a failed publish fails the pipe through tee.
+        shell: bash
         run: |
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then dist_tag=next; else dist_tag=latest; fi
-          pnpm stage publish -r --no-git-checks --tag "$dist_tag"
+          pnpm stage publish -r --no-git-checks --tag "$dist_tag" | tee "$RUNNER_TEMP/stage.log"
+          approvals="$(sed -nE 's/^\+ (.+) \(staged with id (.+)\)$/pnpm stage approve \2  # \1/p' "$RUNNER_TEMP/stage.log")"
+          if [ -n "$approvals" ]; then
+            {
+              echo '## Approve the staged packages'
+              echo
+              echo 'Run in order, base package first. Each command asks for a one-time password.'
+              echo 'Or approve on [npmjs.com](https://www.npmjs.com/settings/~/staged-packages).'
+              echo
+              echo '```bash'
+              echo "$approvals"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Create the GitHub release
         env:

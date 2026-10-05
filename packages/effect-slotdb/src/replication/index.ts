@@ -12,3 +12,5 @@ export * from './sql/stamps.ts'
 export * from './sql/store.ts'
 export type { PurgeReport } from './sql/purge.ts'
 export type { RosterEntry } from './sql/peer-roster.ts'
+
+export type { SyncCursors } from './sql/counterpart-sync-state.ts'

@@ -16,6 +16,11 @@ import {
   type RosterEntry,
 } from './peer-roster.ts'
 import { purgeTombstoned, type PurgeReport } from './purge.ts'
+import {
+  getOrCreateCounterpartSyncCursors,
+  setCounterpartSyncCursors,
+  type SyncCursors,
+} from './counterpart-sync-state.ts'
 import { getPeerSyncCursors, getOrCreatePeerId, setPeerSyncCursors } from './peer-sync-state.ts'
 
 /**
@@ -27,11 +32,35 @@ export interface PeerStore {
   readonly chainPosition: string
   /** This install's peer id, generated and persisted on first use. */
   readonly getOrCreatePeerId: Effect.Effect<string, StorageError>
+  /**
+   * Reads compatibility cursors without a counterpart identity.
+   * Use the counterpart API for exchanges that can select a different remote dataset.
+   */
   readonly getPeerSyncCursors: Effect.Effect<
     { readonly pushCursor: number; readonly pullCursor: number },
     StorageError
   >
+  /**
+   * Records compatibility progress in the singleton row.
+   * Call getOrCreatePeerId first. Counterpart tracking ignores this progress for purge.
+   */
   readonly setPeerSyncCursors: (push: number, pull: number) => Effect.Effect<void, StorageError>
+  /**
+   * Creates zero progress on first contact and reads the counterpart's cursors.
+   * Requires CounterpartSyncState in the chain. Does not adopt singleton progress.
+   */
+  readonly getOrCreateCounterpartSyncCursors: (
+    counterpartId: string,
+  ) => Effect.Effect<SyncCursors, StorageError>
+  /**
+   * Records progress for one counterpart and creates a missing cursor row.
+   * Leaves local peer identity and singleton progress unchanged.
+   */
+  readonly setCounterpartSyncCursors: (
+    counterpartId: string,
+    push: number,
+    pull: number,
+  ) => Effect.Effect<void, StorageError>
   /** Merges incoming changes using each field's policy. Returns accepted changes. */
   readonly applyChanges: (changes: ChangeBatch) => Effect.Effect<ChangeBatch, StorageError>
   /** Returns stamped slots after the cursor with their current values. */
@@ -90,6 +119,10 @@ export const makePeerStore = (
     getOrCreatePeerId: getOrCreatePeerId(sql, index),
     getPeerSyncCursors: getPeerSyncCursors(sql, index),
     setPeerSyncCursors: (push, pull) => setPeerSyncCursors(sql, index, push, pull),
+    getOrCreateCounterpartSyncCursors: counterpartId =>
+      getOrCreateCounterpartSyncCursors(sql, index, counterpartId),
+    setCounterpartSyncCursors: (counterpartId, push, pull) =>
+      setCounterpartSyncCursors(sql, index, counterpartId, push, pull),
     applyChanges: changes => applyChanges(sql, index, changes),
     changesSince: (options = {}) => changesSince(sql, index, options),
     purgeTombstoned: accountId => purgeTombstoned(sql, index, accountId),

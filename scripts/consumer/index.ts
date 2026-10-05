@@ -37,3 +37,11 @@ for (const [name, entry] of Object.entries(entries)) {
   if (Object.keys(entry).length === 0) throw new Error(`${name} has no exports`)
 }
 console.log(`Loaded ${Object.keys(entries).length} entry points.`)
+
+export const counterpartSyncState = Replication.CounterpartSyncState
+export type CounterpartCursors = Replication.SyncCursors
+export type GetCounterpartCursors = Replication.PeerStore['getOrCreateCounterpartSyncCursors']
+export type SetCounterpartCursors = Replication.PeerStore['setCounterpartSyncCursors']
+export const counterpartCursorHelpers = SlotDbTesting.boundTo(SlotDbTesting.FIXTURE_INDEX)
+export const getCounterpartCursors = counterpartCursorHelpers.getOrCreateCounterpartSyncCursors
+export const setCounterpartCursors = counterpartCursorHelpers.setCounterpartSyncCursors
