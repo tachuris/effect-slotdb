@@ -1,6 +1,6 @@
 {
   "name": "effect-slotdb",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "A replicated store for Effect with a SQLite implementation.",
   "keywords": [],
