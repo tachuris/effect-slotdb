@@ -53,6 +53,20 @@ describe('the lockfile round-trips', () => {
     const index = new SchemaIndex(chainOf())
     expect(checkDrift(parseLockfile(index.lockfile()), index)).toEqual([])
   })
+
+  it('parses back a literal holding tabs, quotes and union punctuation', () => {
+    const index = new SchemaIndex([
+      {
+        file: '0000',
+        entities: {
+          document: seed(
+            Schema.Struct({ id: Schema.String, mark: Schema.Literals(['a\tb|"(c)', 'd']) }),
+          ),
+        },
+      },
+    ])
+    expect(checkDrift(parseLockfile(index.lockfile()), index)).toEqual([])
+  })
 })
 
 describe('value drift', () => {
@@ -106,6 +120,22 @@ describe('value drift', () => {
     const found = checkDrift(previous, repolicied)
     expect(found).toHaveLength(1)
     expect(found[0].code).toBe('value-drift')
+  })
+
+  it('detects a renamed literal under the same ID', () => {
+    const withStatus = (status: Schema.Top) =>
+      new SchemaIndex([
+        {
+          file: '0000',
+          entities: { document: seed(Schema.Struct({ id: Schema.String, status })) },
+        },
+      ])
+    const committed = parseLockfile(withStatus(Schema.Literals(['Skipped', 'Done'])).lockfile())
+
+    const found = checkDrift(committed, withStatus(Schema.Literals(['Snoozed', 'Done'])))
+    expect(found).toHaveLength(1)
+    expect(found[0].code).toBe('value-drift')
+    expect(found[0].message).toContain(fieldIdOf('status', '0000'))
   })
 
   it('accepts a retype with a new ID for the new stored type', () => {

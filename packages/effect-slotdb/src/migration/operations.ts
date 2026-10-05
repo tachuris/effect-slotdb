@@ -524,5 +524,16 @@ export const canonicalizeAst = (ast: any): string => {
   if (Array.isArray(ast.types)) {
     return `(${ast.types.map(canonicalizeAst).sort().join('|')})`
   }
+  // Render the value so a renamed literal changes the fingerprint.
+  if (SchemaAST.isLiteral(ast)) return renderLiteral(ast.literal)
   return String(ast._tag)
 }
+
+// Quote strings so '1' and 1 stay distinct. JSON escaping keeps control characters, such
+// as tabs, out of the fingerprint.
+const renderLiteral = (value: SchemaAST.LiteralValue): string =>
+  typeof value === 'string'
+    ? JSON.stringify(value)
+    : typeof value === 'bigint'
+      ? `${value}n`
+      : String(value)

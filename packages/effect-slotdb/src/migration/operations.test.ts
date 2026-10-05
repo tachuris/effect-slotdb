@@ -602,4 +602,23 @@ describe('canonicalizeAst', () => {
     const optional = Schema.Struct({ a: Schema.optional(Schema.String) })
     expect(canonicalizeAst(required.ast)).not.toBe(canonicalizeAst(optional.ast))
   })
+
+  it('renders literal values', () => {
+    expect(canonicalizeAst(Schema.Literals(['Skipped', 'Done']).ast)).toBe('("Done"|"Skipped")')
+    expect(canonicalizeAst(Schema.Literals([0, 1]).ast)).toBe('(0|1)')
+    expect(canonicalizeAst(Schema.Literal(true).ast)).toBe('true')
+    expect(canonicalizeAst(Schema.Literal(1n).ast)).toBe('1n')
+  })
+
+  it('distinguishes a renamed literal', () => {
+    const before = Schema.Literals(['Skipped', 'Done'])
+    const after = Schema.Literals(['Snoozed', 'Done'])
+    expect(canonicalizeAst(before.ast)).not.toBe(canonicalizeAst(after.ast))
+  })
+
+  it('distinguishes a string literal from a number literal of the same digits', () => {
+    expect(canonicalizeAst(Schema.Literal('1').ast)).not.toBe(
+      canonicalizeAst(Schema.Literal(1).ast),
+    )
+  })
 })
