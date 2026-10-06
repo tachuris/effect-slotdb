@@ -1,6 +1,6 @@
 {
   "name": "@tachuris/effect-slotdb-sqlite",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The SQLite dialect for @tachuris/effect-slotdb: DDL and migrations derived from a migration chain.",
   "keywords": [
     "bun",
