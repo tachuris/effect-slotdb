@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest'
 import * as Effect from 'effect/Effect'
+import * as Logger from 'effect/Logger'
 import { SqlClient } from 'effect/sql'
 import { Change, Hlc } from '@tachuris/effect-slotdb/changes'
 import {
@@ -27,7 +28,7 @@ const bornLater = (rowId: string, value: unknown, hlc: Hlc): Change =>
   })
 
 describe('a field this build has no column for', () => {
-  it.effect('is stored rather than dropped, and re-emitted on push', () =>
+  it.effect('is stored and relayed on push', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const rowId = encodeRowId(['a1'])
@@ -54,7 +55,7 @@ describe('a field this build has no column for', () => {
     }).pipe(Effect.provide(FixtureLayer)),
   )
 
-  it.effect('surfaces in no view', () =>
+  it.effect('is excluded from application reads', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const rowId = encodeRowId(['a1'])
@@ -92,7 +93,7 @@ describe('a field this build has no column for', () => {
     }).pipe(Effect.provide(FixtureLayer)),
   )
 
-  it.effect('treats an entity this build does not know the same way', () =>
+  it.effect('stores and relays fields of an unknown entity', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       yield* applyChanges(sql, [
@@ -110,7 +111,7 @@ describe('a field this build has no column for', () => {
     }).pipe(Effect.provide(FixtureLayer)),
   )
 
-  it.effect('keeps the newest of two, so relaying converges like any other slot', () =>
+  it.effect('retains the value with the latest stamp', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const rowId = encodeRowId(['a1'])
@@ -125,8 +126,8 @@ describe('a field this build has no column for', () => {
   )
 })
 
-describe('a value that will not decode', () => {
-  it.effect('is dead-lettered, without a stamp and without reaching the row', () =>
+describe('a value that fails decoding', () => {
+  it.effect('is recorded as a dead letter without updating the row or stamp', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       yield* applyChanges(sql, [change('notes', ['a1'], 'title', 'Reading', Hlc.new(10))])
@@ -159,8 +160,66 @@ describe('a value that will not decode', () => {
   )
 })
 
-describe('a unique tuple two peers both claimed', () => {
-  it.effect('applies both rows, because the merge enforces nothing', () =>
+describe('an undeclared member of an open literal union', () => {
+  it.effect('is stored, stamped, and relayed', () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      yield* applyChanges(sql, [change('signals', ['s1'], 'level', 'critical', Hlc.new(10))])
+
+      const rows = yield* sql<{ readonly level: string }>`
+        SELECT
+          level
+        FROM
+          signals
+        WHERE
+          __rowId = ${encodeRowId(['s1'])}
+      `
+      expect(rows[0].level).toBe('critical')
+
+      const { changes } = yield* changesSince(sql, {})
+      expect(changes.some(c => c.value === 'critical')).toBe(true)
+    }).pipe(Effect.provide(FixtureLayer)),
+  )
+
+  it.effect('logs an undeclared member only when the stored value changes', () =>
+    Effect.gen(function* () {
+      const messages: Array<string> = []
+      const capture = Logger.make(options => {
+        messages.push(JSON.stringify(options.message))
+      })
+      const sql = yield* SqlClient.SqlClient
+
+      yield* applyChanges(sql, [
+        change('signals', ['s1'], 'level', 'low', Hlc.new(10)),
+        change('signals', ['s2'], 'level', 'critical', Hlc.new(11)),
+      ]).pipe(Effect.provide(Logger.layer([capture])))
+      // A stamp update without a value change does not produce another log.
+      yield* applyChanges(sql, [change('signals', ['s2'], 'level', 'critical', Hlc.new(12))]).pipe(
+        Effect.provide(Logger.layer([capture])),
+      )
+
+      expect(messages.filter(m => m.includes('sync.unrecognized_member'))).toHaveLength(1)
+    }).pipe(Effect.provide(FixtureLayer)),
+  )
+
+  it.effect('is recorded as a dead letter when the storage check fails', () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      yield* applyChanges(sql, [change('signals', ['s1'], 'level', '', Hlc.new(10))])
+
+      const dead = yield* sql`
+        SELECT
+          fieldId
+        FROM
+          ${sql(DEAD_LETTER_TABLE)}
+      `
+      expect(dead).toHaveLength(1)
+    }).pipe(Effect.provide(FixtureLayer)),
+  )
+})
+
+describe('a unique tuple shared by two peers', () => {
+  it.effect('applies both rows without enforcing tuple uniqueness', () =>
     Effect.gen(function* () {
       // Accept both offline aliases with the same unique value so replication can
       // continue.
@@ -182,7 +241,7 @@ describe('a unique tuple two peers both claimed', () => {
     }).pipe(Effect.provide(FixtureLayer)),
   )
 
-  it.effect('folds a read of the tuple to the row with the lowest row id', () =>
+  it.effect('selects the row with the lowest row ID when reading by the tuple', () =>
     Effect.gen(function* () {
       // Peers with the same duplicate rows must select the same alias when reading by the
       // unique tuple.

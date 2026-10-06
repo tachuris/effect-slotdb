@@ -1,6 +1,7 @@
 import * as SchemaAST from 'effect/SchemaAST'
 import { EntityId, FieldId } from './ids.ts'
 import { canonicalizeAst } from './operations.ts'
+import { widensOpenUnions } from './open-literals.ts'
 import { Migration } from './migration.ts'
 import { FieldEntry } from './entries.ts'
 import { SchemaIndex } from './schema-index.ts'
@@ -19,8 +20,7 @@ export interface Diagnostic {
 }
 
 /**
- * A committed lockfile, reduced to what the drift check compares: `entity -> field ->
- * print`.
+ * Recorded field fingerprints indexed by entity ID and field ID.
  */
 export type LockSnapshot = ReadonlyMap<EntityId, ReadonlyMap<FieldId, string>>
 
@@ -77,7 +77,7 @@ export const checkDrift = (
         continue
       }
 
-      if (entry.fingerprint !== fingerprint) {
+      if (entry.fingerprint !== fingerprint && !widensOpenUnions(fingerprint, entry.fingerprint)) {
         diagnostics.push({
           code: 'value-drift',
           message:
@@ -142,8 +142,8 @@ export const checkLockfile = (
 }
 
 /**
- * Whether regeneration would overwrite a field identity conflict. Missing, stale, or
- * incomplete lockfiles can be regenerated.
+ * Checks whether regeneration would overwrite a field identity conflict.
+ * Missing, stale, or incomplete lockfiles can be regenerated.
  */
 export const blocksRegeneration = (problem: Diagnostic): boolean =>
   problem.code !== 'missing-lockfile' &&

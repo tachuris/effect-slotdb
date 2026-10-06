@@ -12,6 +12,12 @@ Entity entries resolve application names, columns, row IDs, and codecs for reads
 
 The identity lockfile records IDs, columns, and fingerprints for review. Validation detects changes that conflict with recorded field identities.
 
+`openLiterals(members, { pattern })` declares string members that later builds can extend under the same field ID. The column accepts strings that match `pattern`. The default pattern accepts 1 to 64 characters and excludes control and format characters. Undeclared strings that match the pattern decode as `Unrecognized`. Older peers can store, relay, read, and write these values unchanged.
+
+To add a member, update the member list used by the declaring migration and regenerate the lockfile. Adding an open literal member does not require a migration operation. The lockfile represents the field as `open"<pattern>"("a"|"b")`. Validation accepts added members. Removing or renaming a member, changing the pattern, or switching between open and closed unions causes value drift and requires `retype`.
+
+The replication apply step logs `sync.unrecognized_member` when an undeclared member changes the stored value. Updating the stamp without changing the stored value does not produce another warning.
+
 ## `./replication`
 
 Merges field changes, pages outgoing changes, purges deleted rows, and manages sync metadata and peer registrations through SQL.

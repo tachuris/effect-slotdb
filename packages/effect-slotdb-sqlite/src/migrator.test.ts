@@ -29,7 +29,7 @@ describe('migrating a store from a chain', () => {
     }),
   )
 
-  it.effect('records one migration per chain file, named after it', () =>
+  it.effect('records one migration per chain file using the declared name', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       yield* run
@@ -52,11 +52,12 @@ describe('migrating a store from a chain', () => {
         { migration_id: 6, name: 'wrapped-local' },
         { migration_id: 7, name: 'all-key' },
         { migration_id: 8, name: 'unique' },
+        { migration_id: 9, name: 'open' },
       ])
     }).pipe(Effect.provide(makeInMemorySqliteLayer())),
   )
 
-  it.effect('refuses a store whose shared prefix was built by different migrations', () =>
+  it.effect('rejects conflicting migration history in the shared chain prefix', () =>
     Effect.gen(function* () {
       // Reject conflicting history before the migrator skips recorded IDs.
       const outcome = yield* bootOver([
@@ -72,14 +73,14 @@ describe('migrating a store from a chain', () => {
     }),
   )
 
-  it.effect('accepts a store part-way through the chain, and finishes it', () =>
+  it.effect('completes the chain for a store with an existing history table', () =>
     Effect.gen(function* () {
       // An existing history table may have no applied migrations.
       expect((yield* bootOver([MIGRATIONS_TABLE]))._tag).toBe('Success')
     }),
   )
 
-  it.effect('boots against a store a later build wrote, rather than crashing on it', () =>
+  it.effect('starts with a store created by a newer build', () =>
     Effect.gen(function* () {
       // Accept columns declared by newer migrations so older builds can start and drain
       // overflow.
@@ -100,7 +101,7 @@ describe('migrating a store from a chain', () => {
     }).pipe(Effect.provide(makeInMemorySqliteLayer())),
   )
 
-  it.effect('still refuses a column no migration accounts for', () =>
+  it.effect('rejects a column absent from the recorded migrations', () =>
     Effect.gen(function* () {
       // Reject extra columns without migration history confirming a newer chain prefix.
       const sql = yield* SqlClient.SqlClient

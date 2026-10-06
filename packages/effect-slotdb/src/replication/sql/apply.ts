@@ -78,6 +78,13 @@ const applyRow = (
 
       const decoded = yield* decodable(sql, entity, field, change, merged.value)
       if (!decoded) continue
+      // Log only changed values to avoid repeated warnings when the stamp changes.
+      const arrived = local === undefined || changed(merged.value, local.value)
+      if (arrived && undeclaredMember(field, merged.value)) {
+        yield* Effect.logWarning('sync.unrecognized_member').pipe(
+          Effect.annotateLogs({ ...slotAnnotations(entity, field, change), value: merged.value }),
+        )
+      }
 
       columns[field.column] = merged.value
       yield* putHlc(sql, entityId, rowId, change.fieldId, merged.stamp)
@@ -103,7 +110,7 @@ const applyRow = (
  */
 const changed = (a: unknown, b: unknown): boolean => JSON.stringify(a) !== JSON.stringify(b)
 
-/** The value a slot currently holds, from its column. */
+/** Reads a slot's current value from its column. */
 const storedValue = (
   sql: SqlClient.SqlClient,
   entity: EntityEntry,
@@ -202,16 +209,23 @@ const decodable = (
         reason = excluded.reason
     `.pipe(mapStorageErrorMessage('Failed to record a dead letter'))
     yield* Effect.logWarning('sync.dead_letter').pipe(
-      Effect.annotateLogs({
-        entityId: change.entityId,
-        rowId: change.rowId,
-        fieldId: change.fieldId,
-        entity: entity.name,
-        field: field.currentName ?? field.birthName,
-      }),
+      Effect.annotateLogs(slotAnnotations(entity, field, change)),
     )
     return false
   })
+
+/** Returns slot IDs and application names for log annotations. */
+const slotAnnotations = (entity: EntityEntry, field: FieldEntry, change: Change) => ({
+  entityId: change.entityId,
+  rowId: change.rowId,
+  fieldId: change.fieldId,
+  entity: entity.name,
+  field: field.currentName ?? field.birthName,
+})
+
+/** Checks whether a string is an undeclared member of an open literal union. */
+const undeclaredMember = (field: FieldEntry, value: unknown): boolean =>
+  field.openMembers !== undefined && typeof value === 'string' && !field.openMembers.includes(value)
 
 /** Insert or update the row's columns, filling the key columns on first insert. */
 const writeRow = (

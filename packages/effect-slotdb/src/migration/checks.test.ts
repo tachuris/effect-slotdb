@@ -8,6 +8,7 @@ import {
   parseLockfile,
 } from './checks.ts'
 import { fieldIdOf } from './ids.ts'
+import { openLiterals } from './open-literals.ts'
 import {
   addOptional,
   addRequired,
@@ -35,8 +36,8 @@ const stamped = shapeOf([base], 'document')
 
 const chainOf = (...rest: readonly Migration[]): readonly Migration[] => [base, ...rest]
 
-describe('the lockfile round-trips', () => {
-  it('parses back the fingerprint of every field it emitted', () => {
+describe('lockfile serialization and parsing', () => {
+  it('parses every recorded field fingerprint', () => {
     const index = new SchemaIndex(chainOf())
     const parsed = parseLockfile(index.lockfile())
 
@@ -49,12 +50,12 @@ describe('the lockfile round-trips', () => {
     }
   })
 
-  it('reports drift against nothing when the lockfile is current', () => {
+  it('reports no drift for a current lockfile', () => {
     const index = new SchemaIndex(chainOf())
     expect(checkDrift(parseLockfile(index.lockfile()), index)).toEqual([])
   })
 
-  it('parses back a literal holding tabs, quotes and union punctuation', () => {
+  it('parses a literal containing tabs, quotes, and union punctuation', () => {
     const index = new SchemaIndex([
       {
         file: '0000',
@@ -72,7 +73,7 @@ describe('the lockfile round-trips', () => {
 describe('value drift', () => {
   const previous = parseLockfile(new SchemaIndex(chainOf()).lockfile())
 
-  it('is silent when a field is appended', () => {
+  it('reports no drift when a field is appended', () => {
     const appended = new SchemaIndex(
       chainOf({
         file: '0001',
@@ -148,7 +149,7 @@ describe('value drift', () => {
     expect(checkDrift(previous, retyped)).toEqual([])
   })
 
-  it('catches a field edited out of the chain entirely', () => {
+  it('detects a field deleted from the chain', () => {
     const vanished = new SchemaIndex([
       { file: '0000', entities: { document: seed(Schema.Struct({ id: Schema.String })) } },
     ])
@@ -157,11 +158,75 @@ describe('value drift', () => {
     expect(codes).toContain('vanished-field')
   })
 
-  it('does not confuse a removal with a vanishing, since a removed id is retained', () => {
+  it('accepts a removed field whose retired ID remains in the chain', () => {
     const removed = new SchemaIndex(
       chainOf({ file: '0001', entities: { document: migrateSchema(stamped, remove('title')) } }),
     )
     expect(checkDrift(previous, removed)).toEqual([])
+  })
+})
+
+describe('an open literal union under the same ID', () => {
+  const withMood = (mood: Schema.Top) =>
+    new SchemaIndex([
+      { file: '0000', entities: { document: seed(Schema.Struct({ id: Schema.String, mood })) } },
+    ])
+  const committed = withMood(openLiterals(['calm', 'busy'])).lockfile()
+  const driftAgainst = (mood: Schema.Top) =>
+    checkDrift(parseLockfile(committed), withMood(mood)).map(d => d.code)
+
+  it('accepts an added member', () => {
+    expect(driftAgainst(openLiterals(['calm', 'busy', 'tense']))).toEqual([])
+  })
+
+  it('requires only lockfile regeneration when a member is added', () => {
+    const problems = checkLockfile(withMood(openLiterals(['calm', 'busy', 'tense'])), committed)
+    expect(problems.map(p => p.code)).toContain('stale-lockfile')
+    expect(problems.some(blocksRegeneration)).toBe(false)
+  })
+
+  it('detects a removed member', () => {
+    expect(driftAgainst(openLiterals(['calm']))).toEqual(['value-drift'])
+  })
+
+  it('detects a renamed member', () => {
+    expect(driftAgainst(openLiterals(['calm', 'hectic']))).toEqual(['value-drift'])
+  })
+
+  it('detects a changed merge policy alongside an added member', () => {
+    const repolicied = openLiterals(['calm', 'busy', 'tense']).annotate({ merge: 'fww' })
+    expect(driftAgainst(repolicied)).toEqual(['value-drift'])
+  })
+
+  it('detects a change from an open union to a closed union', () => {
+    expect(driftAgainst(Schema.Literals(['calm', 'busy']))).toEqual(['value-drift'])
+  })
+
+  it('detects a change from a closed union to an open union', () => {
+    const closed = withMood(Schema.Literals(['calm', 'busy'])).lockfile()
+    const opened = withMood(openLiterals(['calm', 'busy']))
+    expect(checkDrift(parseLockfile(closed), opened).map(d => d.code)).toEqual(['value-drift'])
+  })
+
+  it('detects a changed storage pattern', () => {
+    const narrower = openLiterals(['calm', 'busy'], { pattern: /^[a-z]{1,8}$/ })
+    expect(driftAgainst(narrower)).toEqual(['value-drift'])
+  })
+
+  it('accepts an added member inside a nullable wrapper', () => {
+    const before = withMood(Schema.NullOr(openLiterals(['calm', 'busy']))).lockfile()
+    const after = withMood(Schema.NullOr(openLiterals(['calm', 'busy', 'tense'])))
+    expect(checkDrift(parseLockfile(before), after)).toEqual([])
+  })
+
+  it('parses members containing quotes, pipes, and the open marker', () => {
+    const tricky = ['a|b', 'say "hi"', 'open"x"("y")']
+    const before = withMood(openLiterals(tricky)).lockfile()
+    const driftFrom = (mood: Schema.Top) =>
+      checkDrift(parseLockfile(before), withMood(mood)).map(d => d.code)
+
+    expect(driftFrom(openLiterals([...tricky, 'c']))).toEqual([])
+    expect(driftFrom(openLiterals(['a|b', 'open"x"("y")']))).toEqual(['value-drift'])
   })
 })
 
@@ -180,7 +245,7 @@ describe('draft renames', () => {
     expect(found[0].message).toContain('0001')
   })
 
-  it('sees through optionality, which is how the mistake is usually written', () => {
+  it('compares stored types regardless of optionality', () => {
     // Compare stored types without optionality so adding an optional replacement is
     // detected.
     const optional = checkChain(
@@ -305,11 +370,11 @@ describe('a chain against its committed lockfile', () => {
     expect(codesFor(FIXTURE_INDEX, committedFor(FIXTURE_INDEX))).toEqual([])
   })
 
-  it('reports an absent lockfile rather than treating it as agreement', () => {
+  it('reports a missing lockfile', () => {
     expect(codesFor(FIXTURE_INDEX)).toContain('missing-lockfile')
   })
 
-  it('catches a lockfile left behind by a chain that grew, and lets it be rewritten', () => {
+  it('reports a stale lockfile after a field addition and permits regeneration', () => {
     const grown = new SchemaIndex(
       chainOf({
         file: '0001',
@@ -345,7 +410,7 @@ describe('a chain against its committed lockfile', () => {
     expect(codes).toContain('value-drift')
   })
 
-  it('catches a hand-edited lockfile that still parses', () => {
+  it('detects changes to a valid lockfile', () => {
     const index = new SchemaIndex(chainOf())
     const gutted = committedFor(index)
       .split('\n')

@@ -270,7 +270,9 @@ describe('remove', () => {
   })
 
   it('throws when the source is not a struct or a decodeTo of one', () => {
-    expect(() => remove('name')(Schema.String as never)).toThrow('has no fields')
+    expect(() => remove('name')(Schema.String as never)).toThrow(
+      'source must be a Struct or a decodeTo target Struct',
+    )
   })
 
   it('names the field it could not find, since dropping nothing would pass silently', () => {
@@ -327,8 +329,8 @@ describe('retype', () => {
     expect(annotationsOf(fieldsOf(withFallback).first).fallbackDecode!('7')).toBe(7)
   })
 
-  it('refuses a field that has no id yet', () => {
-    expect(() => User.pipe(retype('name', Schema.Number))).toThrow('has no id yet')
+  it('refuses a field that has no assigned ID', () => {
+    expect(() => User.pipe(retype('name', Schema.Number))).toThrow('has no assigned ID')
   })
 
   it('yields the new field type at the type level', () => {
@@ -367,10 +369,10 @@ describe('recodec', () => {
     expect(annotationsOf(fieldsOf(Recoded).first).fieldId).toBe('0000000000000002')
   })
 
-  it('refuses a field that has no id yet', () => {
+  it('refuses a field that has no assigned ID', () => {
     expect(() =>
       User.pipe(recodec('name', Schema.Number, { decode: Number, encode: String })),
-    ).toThrow('has no id yet')
+    ).toThrow('has no assigned ID')
   })
 
   it('yields the new app type over the old stored type at the type level', () => {
@@ -417,10 +419,10 @@ describe('mergeFields', () => {
     expect(annotationsOf(fieldsOf(Merged).full).writable).toBe(true)
   })
 
-  it('refuses a source that has no id yet', () => {
+  it('refuses a source that has no assigned ID', () => {
     expect(() =>
       User.pipe(mergeFields(['id', 'name'], 'both', Schema.String, { combine: a => a })),
-    ).toThrow('has no id yet')
+    ).toThrow('has no assigned ID')
   })
 
   it('yields the target in place of both sources at the type level', () => {

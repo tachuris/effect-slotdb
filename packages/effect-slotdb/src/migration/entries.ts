@@ -21,11 +21,11 @@ interface FieldEntryFields {
   readonly currentName?: string
   readonly kind: 'stored' | 'derived'
   readonly policy: MergePolicy
-  /** Position in the entity's natural key, 1-based, when the field is part of it. */
+  /** Position in the natural key, starting at 1, or undefined for other fields. */
   readonly keyPosition?: number
-  /** Position in the entity's unique tuple, 1-based, when the field is part of it. */
+  /** Position in the unique tuple, starting at 1, or undefined for other fields. */
   readonly uniquePosition?: number
-  /** Stored but never replicated: it has a column and no presence on the wire. */
+  /** Whether the field has a stored column but is excluded from replication. */
   readonly local: boolean
   /** The encoded literal a column defaults to, absent when the field declares none. */
   readonly columnDefault?: unknown
@@ -38,11 +38,13 @@ interface FieldEntryFields {
   readonly fallbackDecode?: (old: unknown) => unknown
   readonly combine?: (a: unknown, b: unknown) => unknown
   readonly split?: (value: unknown) => readonly [unknown, unknown]
+  /** The members an open literal union declares, absent for any other stored type. */
+  readonly openMembers?: ReadonlyArray<string>
   /** The encoded type fingerprint used to compare stored field types. */
   readonly typeFingerprint: string
   /**
-   * The encoded type and merge policy fingerprint. Changing the fingerprint under the
-   * same ID requires `retype` to preserve compatibility with older peers.
+   * The encoded type and merge policy fingerprint. Changes require `retype`, except
+   * additions to open literal member lists, to preserve compatibility with older peers.
    */
   readonly fingerprint: string
   readonly schema: Schema.Top
@@ -80,7 +82,7 @@ const KEY_VALUES_SEPARATOR = '|'
 export const encodeRowId = (keyValues: ReadonlyArray<string>): string =>
   keyValues.join(KEY_VALUES_SEPARATOR)
 
-/** The key values behind a row id, in key order. */
+/** Returns the key values encoded in a row ID, in key order. */
 export const decodeRowId = (rowId: string): ReadonlyArray<string> =>
   rowId.split(KEY_VALUES_SEPARATOR)
 
@@ -90,7 +92,7 @@ interface EntityEntryFields {
   readonly name: EntityName
   readonly table: string
   readonly schema: Schema.Top
-  /** Current field name -> id, for fields in the app-facing shape. */
+  /** Maps current application field names to field IDs. */
   readonly liveFieldIds: ReadonlyMap<string, FieldId>
   /**
    * All field IDs assigned by the chain. Retired fields retain their columns and codecs.
@@ -133,7 +135,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
   /** The columns a raw SELECT needs, in a stable order. */
   readonly selectColumns: ReadonlyArray<string>
 
-  /** The fields the framework owns, which no write may name. */
+  /** The framework fields excluded from application writes. */
   readonly frameworkFields: ReadonlyArray<FieldEntry>
 
   /**

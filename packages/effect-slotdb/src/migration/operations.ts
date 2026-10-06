@@ -5,6 +5,7 @@ import * as SchemaTransformation from 'effect/SchemaTransformation'
 import type { Assign, Simplify } from 'effect/Struct'
 import { annotationsOf } from './annotations.ts'
 import { type FieldId } from './ids.ts'
+import { openFingerprintOf } from './open-literals.ts'
 import {
   withDefault,
   type IsKeyed,
@@ -46,7 +47,7 @@ export const fieldsOf = (source: AnySchema): AnyFields => {
   const s = source as any
   if (s.fields) return s.fields as AnyFields
   if (s.to?.fields) return s.to.fields as AnyFields
-  throw new Error('migration: source has no fields (not a Struct or decodeTo of a Struct)')
+  throw new Error('migration: source must be a Struct or a decodeTo target Struct')
 }
 
 const dropField = (fields: AnyFields, field: string): AnyFields => {
@@ -63,7 +64,7 @@ const requireId = (fields: AnyFields, field: string, op: string): FieldId => {
   const schema = fields[field]
   if (schema === undefined) throw new Error(`${op}: unknown field '${field}'`)
   const id = annotationsOf(schema).fieldId
-  if (id === undefined) throw new Error(`${op}: field '${field}' has no id yet`)
+  if (id === undefined) throw new Error(`${op}: field '${field}' has no assigned ID`)
   return id
 }
 
@@ -87,7 +88,7 @@ type FieldEncoded<S, F extends string> = StructFieldsOf<S>[F] extends { readonly
 /** The field names declared by `S`. */
 type FieldNames<S> = keyof StructFieldsOf<S> & string
 
-/** Whether the fields of `S` are known. A source typed only as a schema answers no. */
+/** Whether `S` has known fields. A general schema type has no known fields. */
 type ShapeKnown<S> = [StructFieldsOf<S>] extends [never] ? false : true
 
 /**
@@ -98,7 +99,7 @@ type HasField<S, F extends string> =
   ShapeKnown<S> extends false ? true : [F] extends [keyof StructFieldsOf<S>] ? true : false
 
 /**
- * Requires all named fields at the call site. Rejects unknown names before chain derivation.
+ * Requires named fields at the call site before chain derivation.
  */
 type WithField<S, F extends string> =
   HasField<S, F> extends true
@@ -190,7 +191,7 @@ export function migrateSchema(seed: any, ...operations: any[]): any {
   return { schema: operations.reduce((acc, op) => op(acc), seed), operations }
 }
 
-// Use `Migration.renameEntity` because entity renames change entity names, not field schemas.
+// Use `Migration.renameEntity` to change entity names without changing field schemas.
 
 // --- adding fields ---------------------------------------------------------
 
@@ -521,6 +522,9 @@ export const canonicalizeAst = (ast: any): string => {
       .sort()
     return `{${props.join(',')}}`
   }
+  // Distinguish open and closed unions so drift checks can accept added open members.
+  const open = openFingerprintOf(ast)
+  if (open !== undefined) return open
   if (Array.isArray(ast.types)) {
     return `(${ast.types.map(canonicalizeAst).sort().join('|')})`
   }

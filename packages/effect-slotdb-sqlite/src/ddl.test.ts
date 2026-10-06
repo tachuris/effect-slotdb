@@ -21,7 +21,7 @@ import { makeInMemorySqliteLayer } from './testing.ts'
 import { type ColumnSpec, columnSpecs, deriveDdl, deriveMigrations, managedTables } from './ddl.ts'
 import { assertDatabaseMatches, checkDatabase, compareColumns } from './guard.ts'
 
-/** Run statements against a fresh in-memory database, then hand it to the caller. */
+/** Runs statements against a fresh database in memory and invokes the callback. */
 const withDatabase = <A, E>(
   statements: ReadonlyArray<string>,
   use: Effect.Effect<A, E, SqlClient.SqlClient>,
@@ -33,7 +33,7 @@ const withDatabase = <A, E>(
   }).pipe(Effect.provide(makeInMemorySqliteLayer()))
 
 describe('the derived DDL builds a real database', () => {
-  it('creates every managed table, and the guard then passes', () =>
+  it('creates all managed tables and passes the boot guard', () =>
     Effect.runPromise(
       withDatabase(
         deriveDdl(FIXTURE_INDEX.chain),
@@ -44,7 +44,7 @@ describe('the derived DDL builds a real database', () => {
       ),
     ))
 
-  it('gives every table an opaque rowId primary key', () =>
+  it('creates a rowId primary key for every table', () =>
     Effect.runPromise(
       withDatabase(
         deriveDdl(FIXTURE_INDEX.chain),
@@ -122,7 +122,7 @@ describe('the derived DDL builds a real database', () => {
       ),
     ))
 
-  it('builds a plain index over a unique tuple, never a unique one', () =>
+  it('creates a nonunique index over a unique tuple', () =>
     Effect.runPromise(
       withDatabase(
         deriveDdl(FIXTURE_INDEX.chain),
@@ -153,7 +153,7 @@ describe('the derived DDL builds a real database', () => {
       ),
     ))
 
-  it('lets two live rows share a unique tuple, because the merge writes rows storage cannot refuse', () =>
+  it('permits two live rows to share a unique tuple for replication', () =>
     Effect.runPromise(
       withDatabase(
         deriveDdl(FIXTURE_INDEX.chain),
@@ -239,21 +239,21 @@ describe('which fields get a column', () => {
   const person = index.entity('person')
   const columnNames = columnSpecs(person).map(spec => spec.name)
 
-  it('keeps a removed field a column, because columns are append-only', () => {
+  it('retains the column of a removed field', () => {
     // Retired columns must accept writes from older peers.
     expect(columnNames).toContain('nickname')
   })
 
-  it('keeps a demoted merge source a column, since it is still replicated', () => {
+  it('retains the column of a replicated merge source', () => {
     expect(columnNames).toContain('first')
     expect(columnNames).toContain('last')
   })
 
-  it('gives a derived field no column, since it is computed on read', () => {
+  it('omits a column for a field computed on read', () => {
     expect(columnNames).not.toContain('full')
   })
 
-  it('creates a table that matches what it expects', () =>
+  it('creates a table that matches the derived column specifications', () =>
     Effect.runPromise(
       withDatabase(
         deriveDdl(chain),
@@ -293,7 +293,7 @@ describe('one migration per chain file', () => {
     expect(migrations.map(m => m.name)).toEqual(['notes', 'tags'])
   })
 
-  it('creates a table in the file that declares it, and nowhere else', () => {
+  it('creates a table only in the migration file that declares the table', () => {
     expect(migrations[0].statements.some(s => s.startsWith('CREATE TABLE note'))).toBe(true)
     expect(migrations[1].statements.some(s => s.includes('CREATE TABLE note'))).toBe(false)
   })
@@ -302,12 +302,12 @@ describe('one migration per chain file', () => {
     expect(migrations[1].statements).toEqual(['ALTER TABLE note ADD COLUMN tag TEXT'])
   })
 
-  it('builds the side tables in the first migration, before anything stamps into them', () => {
+  it('creates replication metadata tables in the first migration', () => {
     expect(migrations[0].statements[0]).toContain(`CREATE TABLE ${STAMPS_TABLE}`)
     expect(migrations[1].statements.some(s => s.includes(STAMPS_TABLE))).toBe(false)
   })
 
-  it('runs a hand-written step with its own file, against the shape it just produced', () =>
+  it('runs a custom step against the schema produced by the same migration', () =>
     Effect.runPromise(
       withDatabase(
         migrations[0].statements,
@@ -334,7 +334,7 @@ describe('one migration per chain file', () => {
     expect(() => deriveMigrations(bad)).toThrow(/'note\.body/)
   })
 
-  it('accepts one that declares a default', () => {
+  it('accepts a new nonnullable column with a default', () => {
     const good: readonly Migration[] = [
       born,
       {
@@ -403,7 +403,7 @@ describe('the boot guard', () => {
       ),
     ))
 
-  it('reports a unique index where the tuple wants a plain one', () =>
+  it('reports a unique index where the tuple requires a nonunique index', () =>
     // Reject unique tuple indexes before incoming duplicate values can stop replication.
     Effect.runPromise(
       withDatabase(
@@ -441,7 +441,7 @@ describe('the boot guard', () => {
       ),
     ))
 
-  it('fails the boot, rather than reporting and continuing', () =>
+  it('fails startup when the boot guard detects a mismatch', () =>
     Effect.runPromise(
       withDatabase(
         [...deriveDdl(FIXTURE_INDEX.chain), `ALTER TABLE notes ADD COLUMN smuggled TEXT`],
@@ -455,7 +455,7 @@ describe('the boot guard', () => {
       ),
     ))
 
-  it('passes a database the derivation built', () =>
+  it('accepts a database created from the derived DDL', () =>
     Effect.runPromise(
       withDatabase(deriveDdl(FIXTURE_INDEX.chain), assertDatabaseMatches(FIXTURE_INDEX)),
     ))
@@ -498,5 +498,12 @@ describe('compareColumns', () => {
     expect(mismatch.differing).toEqual([
       { column: '__rowId', expected: 'TEXT PRIMARY KEY NOT NULL', found: 'TEXT NULL' },
     ])
+  })
+})
+
+describe('an open literal union column', () => {
+  it('stores TEXT and keeps the field required', () => {
+    const level = columnSpecs(FIXTURE_INDEX.entity('signals')).find(spec => spec.name === 'level')
+    expect(level).toMatchObject({ type: 'TEXT', notNull: true })
   })
 })

@@ -9,6 +9,7 @@ import {
   key,
   latch,
   local,
+  openLiterals,
   unique,
   withDefault,
   seed,
@@ -53,7 +54,7 @@ const migration0001 = migration0000.appendMigration({
         ...createdAt,
       }),
     ),
-    // Tests a composite key, a nullable maximum value, and deletion without creation time.
+    // Tests composite keys, nullable maximum values, and deletion without creation time.
     readings: seed(
       Schema.Struct({
         noteId: key(1)(Schema.String),
@@ -146,13 +147,27 @@ const migration0007 = migration0006.appendMigration({
   },
 })
 
-export const FIXTURE_INDEX = migration0007
+const migration0008 = migration0007.appendMigration({
+  file: '0008',
+  name: 'open',
+  entities: {
+    // Tests added open literal members without a retype operation.
+    signals: seed(
+      Schema.Struct({
+        id: key(1)(Schema.String),
+        level: openLiterals(['low', 'high']),
+      }),
+    ),
+  },
+})
+
+export const FIXTURE_INDEX = migration0008
 
 /** Resolves fixture slot addresses from table names, keys, and field names. */
 export const { change, tableOf, fieldOf, entityIdFor, fieldIdFor, touchedTables } =
   replication.makeAddressing(FIXTURE_INDEX)
 
-/** Whatever the fixture calls an account. Opaque to every query that takes one. */
+/** The account ID used by fixture queries. */
 export const TEST_ACCOUNT = 'account-1'
 
 /**
@@ -218,6 +233,6 @@ export const stampChanges = (
   return replication.stampChanges(sql, entity, hlc, rowId, before, after)
 }
 
-/** The key fields of a row, named the way a write states them. */
+/** Returns key values mapped to their application field names. */
 export const keyValues = (table: string, keys: ReadonlyArray<string>): Record<string, unknown> =>
   FIXTURE_INDEX.entityForTable(table).keyValues(keys)

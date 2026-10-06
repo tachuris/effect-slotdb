@@ -5,6 +5,7 @@ import { type EntityId, type FieldId } from './ids.ts'
 import { entityIdOf, fieldIdOf } from './ids.ts'
 import { canonicalizeAst, fieldsOf, type StructFieldsOf } from './operations.ts'
 import { EntityEntry, FieldEntry } from './entries.ts'
+import { openMembersIn } from './open-literals.ts'
 import type { EntityName, Migration, NoExtraProperties } from './migration.ts'
 
 type AnyFields = Schema.Struct.Fields
@@ -124,7 +125,7 @@ export const deriveIndex = (chain: readonly Migration[]) => {
         states.set(name, state)
       }
 
-      // Assign IDs after each operation so subsequent operations can read annotated inputs.
+      // Assign IDs after each operation for subsequent operations to read.
       let schema = state.schema
       for (const op of ops.operations) {
         schema = sweep(state, op(schema), migration.file)
@@ -151,7 +152,7 @@ export const deriveIndex = (chain: readonly Migration[]) => {
       }
     }
 
-    // Retain retired field columns and codecs for relaying values and reading retype fallbacks.
+    // Retain retired columns and codecs to relay values and read retype fallbacks.
     const fieldsById = new Map<FieldId, FieldEntry>()
     const retiredFields = new Set<FieldId>()
 
@@ -184,6 +185,7 @@ export const deriveIndex = (chain: readonly Migration[]) => {
         fallbackDecode: a.fallbackDecode,
         combine: a.combine,
         split: a.split,
+        openMembers: openMembersIn(SchemaAST.toEncoded(schema.ast)),
         typeFingerprint,
         fingerprint: `${typeFingerprint}|${policy}${a.key != null ? `|key=${a.key}` : ''}${a.local === true ? '|local' : ''}${a.framework !== undefined ? `|framework=${a.framework}` : ''}`,
         schema,
@@ -318,7 +320,7 @@ type DeclaredSchemas<C extends readonly unknown[], Acc = object> = C extends rea
   : { readonly [K in keyof Acc]: Acc[K] }
 
 /**
- * Entity entries with declared field types for typed row, key, insert, and patch operations.
+ * Entity entries with declared field types for row, key, insert, and patch operations.
  */
 type TypedEntities<C extends readonly unknown[]> = {
   readonly [K in keyof DeclaredSchemas<C> & string]: EntityEntry<
