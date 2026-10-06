@@ -10,11 +10,11 @@ import {
 import { mapStorageErrorMessage, StorageError } from '../../errors'
 import type { Comparison } from '../types'
 
-/** The row id of a key, encoded the way the chain's key order dictates. */
+/** Encodes a row ID from key values in the order declared by the migration chain. */
 export const rowIdOf = (entity: EntityEntry, key: Record<string, unknown>): string =>
   encodeRowId(entity.keyFields.map(field => String(key[field.currentName!])))
 
-/** The columns a raw SELECT needs, comma-separated, in a stable order. */
+/** Returns column names for SELECT in a stable order, separated by commas. */
 const selectColumns = (entity: EntityEntry): string => entity.selectColumns.join(', ')
 
 /**
@@ -86,7 +86,7 @@ const filterClauses = (
   return { clauses, params }
 }
 
-/** The key of a row, named the way a write states it, taken from a raw row. */
+/** Returns key values from a stored row using application field names. */
 export const keyOfRow = (
   entity: EntityEntry,
   row: Record<string, unknown>,
@@ -201,7 +201,7 @@ export const listRows = (
     )
 }
 
-/** The full column set for an insert, key fields and the row id included. */
+/** Returns insert columns, including key fields and the row ID. */
 const insertColumns = (
   entity: EntityEntry,
   row: Record<string, unknown>,
@@ -229,11 +229,15 @@ export const insertRow = (
   `.pipe(Effect.asVoid, mapStorageErrorMessage('Failed to insert a row'))
 }
 
-/** Inserts a row or updates an existing row using SQLite's conflict clause. */
+/**
+ * Inserts or updates a row. `stored` fills omitted columns for SQLite's NOT NULL check
+ * before conflict resolution. Updates use only supplied columns.
+ */
 export const upsertRow = (
   sql: SqlClient.SqlClient,
   entity: EntityEntry,
   row: Record<string, unknown>,
+  stored: Record<string, unknown>,
 ): Effect.Effect<void, StorageError> => {
   const { values } = insertColumns(entity, row)
   const keyColumns = entity.keyColumns.join(', ')
@@ -247,7 +251,7 @@ export const upsertRow = (
     )
     .map(field => `${field.column} = excluded.${field.column}`)
     .join(', ')
-  // Use DO NOTHING when the row names only key fields because no update columns exist.
+  // Use DO NOTHING when the row contains only key fields and has no columns to update.
   const onConflict =
     setColumns.length === 0
       ? sql.unsafe('DO NOTHING')
@@ -258,7 +262,7 @@ export const upsertRow = (
 `
   return sql`
     INSERT INTO
-      ${sql(entity.table)} ${sql.insert(values)}
+      ${sql(entity.table)} ${sql.insert({ ...stored, ...values })}
     ON CONFLICT (${sql.unsafe(keyColumns)}) ${onConflict}
   `.pipe(Effect.asVoid, mapStorageErrorMessage('Failed to upsert a row'))
 }

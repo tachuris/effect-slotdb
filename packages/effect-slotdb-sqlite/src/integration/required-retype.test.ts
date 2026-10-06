@@ -21,7 +21,7 @@ import { deriveMigrations } from '../ddl.ts'
 import { migrate } from '../migrator.ts'
 import { makeInMemorySqliteLayer } from '../testing.ts'
 
-const OLD = SchemaIndex.seed({
+const OLDER = SchemaIndex.seed({
   file: '0000',
   entities: {
     entry: seed(
@@ -33,18 +33,34 @@ const OLD = SchemaIndex.seed({
     ),
   },
 })
-const NEWER = OLD.appendMigration({
+const NEWER = OLDER.appendMigration({
   file: '0001',
   entities: {
     entry: migrateSchema(
-      OLD.schemas.entry,
-      retype('event', withDefault('Started')(Schema.Literals(['Started', 'Skipped', 'Paused']))),
+      OLDER.schemas.entry,
+      retype('event', withDefault('Started')(Schema.Literals(['Started', 'Skipped', 'Paused'])), {
+        encodeToOld: event => (event === 'Paused' ? 'Skipped' : event),
+      }),
     ),
   },
 })
-const ADDRESS = makeAddressing(OLD)
-const NEW_ADDRESS = makeAddressing(NEWER)
-const OLDER_PEER = boundTo(OLD)
+const NEWEST = NEWER.appendMigration({
+  file: '0002',
+  entities: {
+    entry: migrateSchema(
+      NEWER.schemas.entry,
+      retype(
+        'event',
+        withDefault('Started')(Schema.Literals(['Started', 'Skipped', 'Paused', 'Done'])),
+        { encodeToOld: event => (event === 'Done' ? 'Paused' : event) },
+      ),
+    ),
+  },
+})
+const OLDER_ADDRESS = makeAddressing(OLDER)
+const NEWER_ADDRESS = makeAddressing(NEWER)
+const OLDER_PEER = boundTo(OLDER)
+const NEWER_PEER = boundTo(NEWER)
 
 const DEFAULTED = SchemaIndex.seed({
   file: '0000',
@@ -74,12 +90,38 @@ const testLayer = (index: SchemaIndex) =>
   )
 
 describe('retiring a required column', () => {
-  it('rejects removal of a required source without a default', () => {
-    const removed = OLD.appendMigration({
+  it('rejects a retype without encodeToOld', () => {
+    const retyped = OLDER.appendMigration({
       file: '0001',
-      entities: { entry: migrateSchema(OLD.schemas.entry, remove('event')) },
+      entities: {
+        entry: migrateSchema(
+          OLDER.schemas.entry,
+          // @ts-expect-error: the retired column needs a value on each insert
+          retype('event', Schema.Literals(['Started', 'Skipped', 'Paused'])),
+        ),
+      },
+    })
+    expect(() => deriveMigrations(retyped.chain)).toThrow(/retiring 'entry.event'.*encodeToOld/)
+  })
+
+  it('rejects removal of a required source without a default', () => {
+    const removed = OLDER.appendMigration({
+      file: '0001',
+      entities: { entry: migrateSchema(OLDER.schemas.entry, remove('event')) },
     })
     expect(() => deriveMigrations(removed.chain)).toThrow(/retiring 'entry.event'/)
+  })
+
+  it('rejects removal of the live field that fills a retired column', () => {
+    const removed = NEWER.appendMigration({
+      file: '0002',
+      entities: { entry: migrateSchema(NEWER.schemas.entry, remove('event')) },
+    })
+    expect(() => deriveMigrations(removed.chain)).toThrow(/retiring 'entry.event'/)
+  })
+
+  it('accepts a retype with encodeToOld', () => {
+    expect(() => deriveMigrations(NEWEST.chain)).not.toThrow()
   })
 
   it.effect('inserts after retiring a nullable source without a default', () => {
@@ -115,12 +157,6 @@ describe('retiring a required column', () => {
     }).pipe(Effect.provide(testLayer(current)))
   })
 
-  it('rejects a source without a default even when the replacement has one', () => {
-    expect(() => deriveMigrations(NEWER.chain)).toThrow(
-      /retiring 'entry.event'.*source column default/,
-    )
-  })
-
   it.effect('inserts and puts rows when the retired source declares a default', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
@@ -136,7 +172,106 @@ describe('retiring a required column', () => {
   )
 })
 
-describe('an older peer with a required source column', () => {
+describe('a retype with encodeToOld', () => {
+  it.effect.each(['insert', 'put'] as const)('fills the retired column on %s', method =>
+    Effect.gen(function* () {
+      const db = new Db(yield* SqlClient.SqlClient)
+      yield* db[method](NEWER.typed.entry, { id: 'one', title: 'Reading', event: 'Paused' })
+      expect((yield* db.find(NEWER.typed.entry, { id: 'one' }))?.event).toBe('Paused')
+      expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Skipped')
+    }).pipe(Effect.provide(testLayer(NEWER))),
+  )
+
+  it.effect.each(['insert', 'put'] as const)(
+    'fills the retired column from the default on %s',
+    method =>
+      Effect.gen(function* () {
+        const db = new Db(yield* SqlClient.SqlClient)
+        yield* db[method](NEWER.typed.entry, { id: 'one', title: 'Reading' })
+        expect((yield* db.find(NEWER.typed.entry, { id: 'one' }))?.event).toBe('Started')
+        expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Started')
+      }).pipe(Effect.provide(testLayer(NEWER))),
+  )
+
+  it.effect('keeps both columns when a put omits the field', () =>
+    Effect.gen(function* () {
+      const db = new Db(yield* SqlClient.SqlClient)
+      yield* db.insert(NEWER.typed.entry, { id: 'one', title: 'Reading', event: 'Paused' })
+      yield* db.put(NEWER.typed.entry, { id: 'one', title: 'Writing' })
+      expect((yield* db.find(NEWER.typed.entry, { id: 'one' }))?.event).toBe('Paused')
+      expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Skipped')
+    }).pipe(Effect.provide(testLayer(NEWER))),
+  )
+
+  it.effect('keeps a retired value from an older peer when a put omits the field', () =>
+    Effect.gen(function* () {
+      const page = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* new Db(sql).insert(OLDER.typed.entry, {
+          id: 'one',
+          title: 'Reading',
+          event: 'Skipped',
+        })
+        return (yield* OLDER_PEER.changesSince(sql)).changes
+      }).pipe(Effect.provide(testLayer(OLDER)))
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const db = new Db(sql)
+        yield* NEWER_PEER.applyChanges(sql, page)
+        const { cursor } = yield* NEWER_PEER.changesSince(sql)
+        yield* db.put(NEWER.typed.entry, { id: 'one', title: 'Writing' })
+        expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Skipped')
+        const oldEvent = OLDER_ADDRESS.change('entry', ['one'], 'event', 'Skipped', Hlc.new(0))
+        const later = (yield* NEWER_PEER.changesSince(sql, { cursor })).changes
+        expect(later.map(change => change.fieldId)).not.toContain(oldEvent.fieldId)
+      }).pipe(Effect.provide(testLayer(NEWER)))
+    }),
+  )
+
+  it.effect('fills the retired column on update', () =>
+    Effect.gen(function* () {
+      const db = new Db(yield* SqlClient.SqlClient)
+      yield* db.insert(NEWER.typed.entry, { id: 'one', title: 'Reading', event: 'Paused' })
+      yield* db.update(NEWER.typed.entry, { id: 'one' }, { event: 'Started' })
+      expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Started')
+    }).pipe(Effect.provide(testLayer(NEWER))),
+  )
+
+  it.effect('fills every column of a chained retype', () =>
+    Effect.gen(function* () {
+      const db = new Db(yield* SqlClient.SqlClient)
+      yield* db.insert(NEWEST.typed.entry, { id: 'one', title: 'Reading', event: 'Done' })
+      expect((yield* db.find(NEWEST.typed.entry, { id: 'one' }))?.event).toBe('Done')
+      expect((yield* db.find(NEWER.typed.entry, { id: 'one' }))?.event).toBe('Paused')
+      expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.event).toBe('Skipped')
+    }).pipe(Effect.provide(testLayer(NEWEST))),
+  )
+
+  it.effect('lets a peer without the retype insert a row from a newer peer', () =>
+    Effect.gen(function* () {
+      const page = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* new Db(sql).insert(NEWER.typed.entry, {
+          id: 'one',
+          title: 'Reading',
+          event: 'Paused',
+        })
+        return (yield* NEWER_PEER.changesSince(sql)).changes
+      }).pipe(Effect.provide(testLayer(NEWER)))
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* OLDER_PEER.applyChanges(sql, page)
+        const row = yield* new Db(sql).find(OLDER.typed.entry, { id: 'one' })
+        expect(row?.title).toBe('Reading')
+        expect(row?.event).toBe('Skipped')
+      }).pipe(Effect.provide(testLayer(OLDER)))
+    }),
+  )
+})
+
+describe('a row split across pages', () => {
   it.effect('merges sets while the row waits for a required value', () => {
     const index = SchemaIndex.seed({
       file: '0000',
@@ -170,63 +305,63 @@ describe('an older peer with a required source column', () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         yield* OLDER_PEER.applyChanges(sql, [
-          ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(20)),
-          NEW_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(21)),
+          OLDER_ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(20)),
+          NEWER_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(21)),
         ])
         const db = new Db(sql)
-        yield* db[method](OLD.typed.entry, { id: 'one', title: 'Writing', event: 'Started' })
+        yield* db[method](OLDER.typed.entry, { id: 'one', title: 'Writing', event: 'Started' })
         const before = yield* OLDER_PEER.changesSince(sql)
         expect(yield* OLDER_PEER.drainOverflow(sql)).toBe(0)
-        expect((yield* db.find(OLD.typed.entry, { id: 'one' }))?.title).toBe('Writing')
+        expect((yield* db.find(OLDER.typed.entry, { id: 'one' }))?.title).toBe('Writing')
         expect((yield* OLDER_PEER.changesSince(sql)).changes).toEqual(before.changes)
-      }).pipe(Effect.provide(testLayer(OLD))),
+      }).pipe(Effect.provide(testLayer(OLDER))),
   )
 
   it.effect('relays an incomplete row and applies other rows in the batch', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const pending = [
-        ADDRESS.change('entry', ['one'], 'id', 'one', Hlc.new(10)),
-        ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(10)),
-        NEW_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(11)),
+        OLDER_ADDRESS.change('entry', ['one'], 'id', 'one', Hlc.new(10)),
+        OLDER_ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(10)),
+        NEWER_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(11)),
       ]
       const complete = [
-        ADDRESS.change('entry', ['two'], 'title', 'Writing', Hlc.new(12)),
-        ADDRESS.change('entry', ['two'], 'event', 'Skipped', Hlc.new(12)),
+        OLDER_ADDRESS.change('entry', ['two'], 'title', 'Writing', Hlc.new(12)),
+        OLDER_ADDRESS.change('entry', ['two'], 'event', 'Skipped', Hlc.new(12)),
       ]
       expect(yield* OLDER_PEER.applyChanges(sql, [...pending, ...complete])).toHaveLength(5)
       const db = new Db(sql)
-      expect(yield* db.find(OLD.typed.entry, { id: 'one' })).toBeUndefined()
-      expect((yield* db.find(OLD.typed.entry, { id: 'two' }))?.title).toBe('Writing')
+      expect(yield* db.find(OLDER.typed.entry, { id: 'one' })).toBeUndefined()
+      expect((yield* db.find(OLDER.typed.entry, { id: 'two' }))?.title).toBe('Writing')
       expect(yield* OLDER_PEER.drainOverflow(sql)).toBe(0)
       const relayed = (yield* OLDER_PEER.changesSince(sql)).changes
       for (const change of pending) expect(relayed).toContainEqual(change)
-    }).pipe(Effect.provide(testLayer(OLD))),
+    }).pipe(Effect.provide(testLayer(OLDER))),
   )
 
   it.effect('merges pending values and creates the row when the required field arrives', () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
-      const title = ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(20))
-      const future = NEW_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(21))
+      const title = OLDER_ADDRESS.change('entry', ['one'], 'title', 'Reading', Hlc.new(20))
+      const future = NEWER_ADDRESS.change('entry', ['one'], 'event', 'Paused', Hlc.new(21))
       yield* OLDER_PEER.applyChanges(sql, [title, future])
       expect(
         yield* OLDER_PEER.applyChanges(sql, [
-          ADDRESS.change('entry', ['one'], 'title', 'Stale', Hlc.new(10)),
+          OLDER_ADDRESS.change('entry', ['one'], 'title', 'Stale', Hlc.new(10)),
         ]),
       ).toEqual([])
       yield* OLDER_PEER.applyChanges(sql, [
-        ADDRESS.change('entry', ['one'], 'event', 'Started', Hlc.new(22)),
+        OLDER_ADDRESS.change('entry', ['one'], 'event', 'Skipped', Hlc.new(22)),
       ])
-      const row = yield* new Db(sql).find(OLD.typed.entry, { id: 'one' })
+      const row = yield* new Db(sql).find(OLDER.typed.entry, { id: 'one' })
       expect(row?.title).toBe('Reading')
-      expect(row?.event).toBe('Started')
+      expect(row?.event).toBe('Skipped')
       const relayed = (yield* OLDER_PEER.changesSince(sql)).changes
       expect(relayed).toContainEqual(title)
       expect(relayed).toContainEqual(future)
       const { cursor } = yield* OLDER_PEER.changesSince(sql)
       const page = yield* OLDER_PEER.changesSince(sql, { cursor })
       expect(page.changes).toEqual([])
-    }).pipe(Effect.provide(testLayer(OLD))),
+    }).pipe(Effect.provide(testLayer(OLDER))),
   )
 })

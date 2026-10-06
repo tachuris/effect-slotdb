@@ -31,7 +31,7 @@ const Document = Schema.Struct({
 
 const base = { file: '0000', entities: { document: seed(Document) } } satisfies Migration
 
-/** The base shape with its ids stamped, which the id-reading operations need. */
+/** The base schema with field IDs assigned for operations that require IDs. */
 const stamped = shapeOf([base], 'document')
 
 const chainOf = (...rest: readonly Migration[]): readonly Migration[] => [base, ...rest]
@@ -143,7 +143,9 @@ describe('value drift', () => {
     const retyped = new SchemaIndex(
       chainOf({
         file: '0001',
-        entities: { document: migrateSchema(stamped, retype('title', Schema.Number)) },
+        entities: {
+          document: migrateSchema(stamped, retype('title', Schema.Number, { encodeToOld: String })),
+        },
       }),
     )
     expect(checkDrift(previous, retyped)).toEqual([])
@@ -246,8 +248,7 @@ describe('draft renames', () => {
   })
 
   it('compares stored types regardless of optionality', () => {
-    // Compare stored types without optionality so adding an optional replacement is
-    // detected.
+    // Ignore optionality when checking for a replacement with the same stored type.
     const optional = checkChain(
       chainOf({
         file: '0001',
@@ -320,7 +321,9 @@ describe('draft renames', () => {
     const found = checkChain(
       chainOf({
         file: '0001',
-        entities: { document: migrateSchema(stamped, retype('title', Schema.String)) },
+        entities: {
+          document: migrateSchema(stamped, retype('title', Schema.String, { encodeToOld: s => s })),
+        },
       }),
     )
     expect(found).toEqual([])
@@ -383,15 +386,14 @@ describe('a chain against its committed lockfile', () => {
     )
     const problems = checkLockfile(grown, committedFor(new SchemaIndex(chainOf())))
     const codes = problems.map(problem => problem.code)
-    // Regeneration fixes stale text and missing fingerprints without an identity
-    // conflict.
+    // Regeneration corrects stale text and missing fingerprints when field IDs match.
     expect(codes).toContain('stale-lockfile')
     expect(codes).toContain('unrecorded-field')
     expect(problems.filter(blocksRegeneration)).toEqual([])
   })
 
   it('rejects a changed stored type under the same ID', () => {
-    // Retyping in a new migration would assign a new ID instead of changing the old ID.
+    // A retype in a new migration assigns a new ID and preserves the retired ID.
     const edited = new SchemaIndex([
       {
         file: '0000',

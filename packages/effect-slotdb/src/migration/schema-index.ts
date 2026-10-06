@@ -40,8 +40,7 @@ export class SchemaIndex<const C extends readonly Migration[] = readonly Migrati
   }
 
   /**
-   * Appends a migration to a chain and reads back the chain and every entity's shape at
-   * that point.
+   * Appends a migration and returns the updated chain and entity schemas.
    */
   appendMigration<const M extends Migration>(migration: M & NoExtraProperties<M>) {
     const appended = [...this.chain, migration] as unknown as readonly [...C, M]
@@ -49,7 +48,7 @@ export class SchemaIndex<const C extends readonly Migration[] = readonly Migrati
   }
 
   /**
-   * The entity a current name resolves to. Throws when the chain declares no such entity.
+   * Returns the entity for a current name. Throws when the chain has no matching entity.
    */
   entity(name: EntityName): EntityEntry {
     const entry = this.byName.get(name)
@@ -183,6 +182,7 @@ export const deriveIndex = (chain: readonly Migration[]) => {
         derivedFrom: a.derivedFrom,
         supersedes: a.supersedes,
         fallbackDecode: a.fallbackDecode,
+        fallbackEncode: a.fallbackEncode,
         combine: a.combine,
         split: a.split,
         openMembers: openMembersIn(SchemaAST.toEncoded(schema.ast)),
@@ -223,14 +223,14 @@ interface Born {
   readonly birthName: string
   readonly bornIn: string
   readonly column: string
-  /** The last schema this field had, so a retired column stays decodable. */
+  /** The schema used to decode the retired column. */
   schema: AnySchema
 }
 
 interface EntityState {
   readonly birthName: string
   schema: AnySchema
-  /** Column names claimed so far, including retired ones. Append-only. */
+  /** Assigned column names, including retired columns. Names remain reserved. */
   readonly claimed: Set<string>
   readonly born: Map<FieldId, Born>
 }
@@ -262,7 +262,7 @@ const sweep = (state: EntityState, schema: AnySchema, file: string): AnySchema =
 
     const id = fieldIdOf(name, file)
     if (state.born.has(id)) {
-      throw new Error(`migration: id collision for '${state.birthName}.${name}' in ${file}`)
+      throw new Error(`migration: ID collision for '${state.birthName}.${name}' in ${file}`)
     }
 
     // Resolve column name conflicts with an ID suffix.
@@ -302,8 +302,7 @@ type WithRenames<Acc, M> = M extends { readonly renameEntity: infer R }
   : Acc
 
 /**
- * Overwrites the shape of every entity a file declares, leaving the rest of the record
- * alone.
+ * Replaces schemas for entities declared in a file and preserves other entries.
  */
 type WithDeclarations<Acc, M> = M extends { readonly entities: infer E }
   ? Omit<Acc, keyof E> & {

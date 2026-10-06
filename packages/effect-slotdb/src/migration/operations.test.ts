@@ -19,7 +19,7 @@ import {
 } from './operations.ts'
 import { annotationsOf } from './annotations.ts'
 import { FieldId } from './ids.ts'
-import { local } from './fields.ts'
+import { local, withDefault } from './fields.ts'
 
 const User = Schema.Struct({
   id: Schema.String,
@@ -305,7 +305,7 @@ describe('rename', () => {
 })
 
 describe('retype', () => {
-  const Retyped = Stamped.pipe(retype('first', Schema.Number))
+  const Retyped = Stamped.pipe(retype('first', Schema.Number, { encodeToOld: String }))
 
   it('replaces the stored type of the field', () => {
     expect(Schema.decodeUnknownSync(Retyped)({ id: 'u1', first: 7, last: 'L' })).toEqual({
@@ -324,13 +324,35 @@ describe('retype', () => {
 
   it('records a fallback lens when one is declared', () => {
     const withFallback = Stamped.pipe(
-      retype('first', Schema.Number, { decodeFromOld: s => Number(s) }),
+      retype('first', Schema.Number, { decodeFromOld: s => Number(s), encodeToOld: String }),
     )
     expect(annotationsOf(fieldsOf(withFallback).first).fallbackDecode!('7')).toBe(7)
+    expect(annotationsOf(fieldsOf(withFallback).first).fallbackEncode!(7)).toBe('7')
+  })
+
+  it('requires encodeToOld for a required source without a default', () => {
+    // @ts-expect-error: the retired column needs a value on each insert
+    Stamped.pipe(retype('first', Schema.Number))
+  })
+
+  it('requires encodeToOld to return the retired field type', () => {
+    // @ts-expect-error: the retired field stores a string
+    Stamped.pipe(retype('first', Schema.Number, { encodeToOld: n => n }))
+  })
+
+  it('accepts a retype without encodeToOld for a nullable or defaulted source', () => {
+    const Optional = Schema.Struct({
+      id: Stamped.fields.id,
+      note: Schema.NullOr(Schema.String).annotate({ fieldId: FieldId.make('0000000000000004') }),
+      kind: withDefault('a')(Schema.String.annotate({ fieldId: FieldId.make('0000000000000005') })),
+    })
+    Optional.pipe(retype('note', Schema.Number), retype('kind', Schema.Number))
   })
 
   it('refuses a field that has no assigned ID', () => {
-    expect(() => User.pipe(retype('name', Schema.Number))).toThrow('has no assigned ID')
+    expect(() => User.pipe(retype('name', Schema.Number, { encodeToOld: String }))).toThrow(
+      'has no assigned ID',
+    )
   })
 
   it('yields the new field type at the type level', () => {

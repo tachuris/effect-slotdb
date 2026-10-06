@@ -72,7 +72,7 @@ export class TxImpl implements Tx {
     this.touched = new Set<EntityName>()
   }
 
-  /** Inserts a row, and stamps it for replication, failing when it already exists. */
+  /** Inserts a row and stamps changes for replication. Fails if the row exists. */
   insert<E extends EntityEntry<any>>(
     entity: E,
     row: InsertOf<E>,
@@ -82,7 +82,7 @@ export class TxImpl implements Tx {
     return Effect.gen(function* () {
       const rowId = queries.rowIdOf(entity, row)
       yield* refuseDuplicate(self.sql, entity, rowId, row, {})
-      const stored = withCreationTime(entity, row, {}, self.at)
+      const stored = withCreationTime(entity, entity.withSupersededDefaults(row), {}, self.at)
       yield* queries.insertRow(self.sql, entity, stored)
       yield* stampReplicated(self.sql, entity, self.hlc, rowId, row, {}, stored)
       self.touched.add(entity.name)
@@ -90,8 +90,7 @@ export class TxImpl implements Tx {
   }
 
   /**
-   * Inserts a row or updates it when it already exists, and stamps the changes for
-   * replication.
+   * Inserts or updates a row and stamps changes for replication.
    */
   put<E extends EntityEntry<any>>(
     entity: E,
@@ -101,10 +100,12 @@ export class TxImpl implements Tx {
     const self = this
     return Effect.gen(function* () {
       const rowId = queries.rowIdOf(entity, row)
-      const before = (yield* queries.findRow(self.sql, entity, row, { includeDeleted: true })) ?? {}
+      const found = yield* queries.findRow(self.sql, entity, row, { includeDeleted: true })
+      const before = found ?? {}
       yield* refuseDuplicate(self.sql, entity, rowId, row, before)
-      const stored = withCreationTime(entity, row, before, self.at)
-      yield* queries.upsertRow(self.sql, entity, stored)
+      const created = found === undefined ? entity.withSupersededDefaults(row) : row
+      const stored = withCreationTime(entity, created, before, self.at)
+      yield* queries.upsertRow(self.sql, entity, stored, before)
       yield* stampReplicated(self.sql, entity, self.hlc, rowId, row, before, stored)
       self.touched.add(entity.name)
     })

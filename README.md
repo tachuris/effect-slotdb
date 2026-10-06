@@ -25,9 +25,11 @@ A replicated store for [Effect](https://effect.website) with a SQLite implementa
 
 ## Required columns and retypes
 
-SQLite retains a retired column's `NOT NULL` constraint. DDL derivation rejects retirement of a required column without a source default, including retirement through `retype` or `remove`. A replacement column's default cannot fill the source column. Declare `withDefault` on a required field when creating its column, or declare a nullable source. Do not edit an applied migration to add a default.
+SQLite retains a retired column's `NOT NULL` constraint, so each insert must still fill a retired column that is `NOT NULL` without a default. Pass `encodeToOld` to `retype` for such a field. `encodeToOld` maps each written value, including the new field's default, to the retired field's type, and the store writes and replicates both slots. Peers that know only the retired field then read and insert the row. The `retype` type requires `encodeToOld` when the source field is required without a default.
 
-Replication retains an incomplete row's accepted values and stamps in overflow when the physical table requires a missing column. The peer relays the pending values and continues to apply other rows. The row stays absent from reads until the peer receives enough values to insert it. Later pages merge against the pending values before creating the row.
+DDL derivation rejects a retired `NOT NULL` column without a default when no live field fills it through `encodeToOld`. `remove` cannot fill a column, so derivation also rejects removal of such a field and removal of the live field that fills it. Do not edit an applied migration to add a default.
+
+A sync page can end between two fields of one row. When the physical table requires a column that the received fields lack, the peer stores the row's accepted values and stamps in overflow. The peer relays these values and continues to apply other rows. The row stays absent from reads until the peer has a value for every required column. Later pages merge against the held values before the peer creates the row.
 
 ## Example apps
 

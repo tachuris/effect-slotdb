@@ -329,7 +329,12 @@ describe('one migration per chain file', () => {
     // Required field additions provide defaults, but retypes may omit a default.
     const bad: readonly Migration[] = [
       born,
-      { file: '0001', entities: { note: migrateSchema(stamped, retype('body', Schema.String)) } },
+      {
+        file: '0001',
+        entities: {
+          note: migrateSchema(stamped, retype('body', Schema.String, { encodeToOld: s => s })),
+        },
+      },
     ]
     expect(() => deriveMigrations(bad)).toThrow(/'note\.body/)
   })

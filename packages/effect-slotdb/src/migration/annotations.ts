@@ -25,21 +25,24 @@ declare module 'effect/Schema' {
       /** The field ID assigned by schema derivation. */
       readonly fieldId?: FieldId
 
-      /** On a merge target: the source ids it projects from. */
+      /** The source field IDs used to compute a merge target. */
       readonly derivedFrom?: readonly FieldId[]
 
-      /** On a retype or promote result: the ids it replaces. */
+      /** The field IDs replaced by a retype or promote result. */
       readonly supersedes?: readonly FieldId[]
 
-      /** One-way read of a superseded slot, active while this one is empty. */
+      /** Decodes a superseded slot when the current slot is empty. */
       readonly fallbackDecode?: (old: unknown) => unknown
+
+      /** Maps the current slot's value to the superseded slot's type on each write. */
+      readonly fallbackEncode?: (value: unknown) => unknown
 
       readonly combine?: (a: any, b: any) => any
 
       readonly split?: (value: any) => readonly [any, any]
 
       /**
-       * False for a merge target declared without a `split`, which cannot be written back.
+       * False for a merge target without `split` because the target cannot accept writes.
        */
       readonly writable?: boolean
 
@@ -69,7 +72,7 @@ declare module 'effect/Schema' {
        */
       readonly columnDefault?: unknown
 
-      /** Project a derived field into a column so it can be queried. */
+      /** Whether a derived field has a stored column for queries. */
       readonly materialize?: boolean
 
       /**

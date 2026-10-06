@@ -17,7 +17,7 @@ interface FieldEntryFields {
   readonly birthName: string
   readonly bornIn: string
   readonly column: string
-  /** The current app-facing name, absent once the field leaves the shape. */
+  /** The current application name, absent once the field leaves the shape. */
   readonly currentName?: string
   readonly kind: 'stored' | 'derived'
   readonly policy: MergePolicy
@@ -36,6 +36,8 @@ interface FieldEntryFields {
   readonly derivedFrom?: ReadonlyArray<FieldId>
   readonly supersedes?: ReadonlyArray<FieldId>
   readonly fallbackDecode?: (old: unknown) => unknown
+  /** Maps a value to the superseded field's type so writes also fill the retired slot. */
+  readonly fallbackEncode?: (value: unknown) => unknown
   readonly combine?: (a: unknown, b: unknown) => unknown
   readonly split?: (value: unknown) => readonly [unknown, unknown]
   /** The members an open literal union declares, absent for any other stored type. */
@@ -129,7 +131,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
    */
   readonly columnFields: ReadonlyArray<FieldEntry>
 
-  /** The fields in the app-facing shape, in declaration order. */
+  /** The fields in the application shape, in declaration order. */
   readonly liveFields: ReadonlyArray<FieldEntry>
 
   /** The columns a raw SELECT needs, in a stable order. */
@@ -257,7 +259,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
     return this.#byColumnKey.get(columnKey)
   }
 
-  /** Decode a row of column values into the app-facing shape. */
+  /** Decodes a row of column values into the application shape. */
   decode(row: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = {}
 
@@ -285,6 +287,20 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
       if (fallback !== undefined) out[name] = fallback
     }
 
+    return out
+  }
+
+  /**
+   * Adds defaults for omitted fields with `encodeToOld` so new rows also fill the
+   * superseded columns.
+   */
+  withSupersededDefaults(row: Record<string, unknown>): Record<string, unknown> {
+    const out = { ...row }
+    for (const field of this.liveFields) {
+      const name = field.currentName!
+      if (name in out || field.fallbackEncode === undefined) continue
+      if (field.columnDefault !== undefined) out[name] = field.decodeField(field.columnDefault)
+    }
     return out
   }
 
@@ -319,7 +335,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
       throw new Error(`migration: '${this.name}.${name}' is not live`)
     }
     if (field.kind !== 'derived') {
-      return { [field.column]: field.encodeField(value) }
+      return this.#encodeStored(field, value)
     }
     if (!field.writable) {
       throw new Error(`migration: '${this.name}.${name}' is derived and has no split`)
@@ -335,12 +351,26 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
     }
   }
 
+  /**
+   * Encodes a stored field and its superseded slots through `encodeToOld`. Peers that
+   * know only a superseded field can read and insert rows using the superseded slot.
+   */
+  #encodeStored(field: FieldEntry, value: unknown): Record<string, unknown> {
+    const out: Record<string, unknown> = { [field.column]: field.encodeField(value) }
+    if (field.fallbackEncode === undefined || field.supersedes === undefined) return out
+    const oldValue = field.fallbackEncode(value)
+    for (const id of field.supersedes) {
+      Object.assign(out, this.#encodeStored(this.fieldsById.get(id)!, oldValue))
+    }
+    return out
+  }
+
   #valueOf(row: Record<string, unknown>, id: FieldId): unknown {
     const field = this.fieldsById.get(id)
     return field === undefined ? undefined : row[field.column]
   }
 
-  /** Reads the first populated superseded slot through the operation's decode path. */
+  /** Decodes the first populated superseded slot through `decodeFromOld`. */
   #supersededValue(row: Record<string, unknown>, field: FieldEntry): unknown {
     if (field.fallbackDecode === undefined || field.supersedes === undefined) return undefined
     for (const old of field.supersedes) {

@@ -3,8 +3,9 @@ import * as Schema from 'effect/Schema'
 import { SqlClient } from 'effect/sql'
 import { mapStorageErrorMessage, StorageError } from '../../errors.ts'
 import type { SchemaIndex } from '../../migration'
-import { EntityId, FieldId, OVERFLOW_TABLE, STAMPS_TABLE } from '../../migration'
+import { EntityId, FieldId, STAMPS_TABLE } from '../../migration'
 import { Change, type ChangeBatch, HlcColumn } from '../../changes'
+import { overflowValue } from './overflow.ts'
 
 const StampRow = Schema.Struct({
   entityId: EntityId,
@@ -14,9 +15,6 @@ const StampRow = Schema.Struct({
   seq: Schema.Number,
 })
 const decodeStampRows = Schema.decodeUnknownEffect(Schema.Array(StampRow))
-
-const OverflowRow = Schema.Struct({ value: Schema.NullOr(Schema.String) })
-const decodeOverflowRows = Schema.decodeUnknownEffect(Schema.Array(OverflowRow))
 
 /**
  * Returns stamped slots after the cursor, including unknown fields stored in overflow.
@@ -86,6 +84,7 @@ export const changesSince = (
           1
       `
       if (rows.length === 0) {
+        // Relay known slots stored in overflow while required row values are missing.
         const stored = yield* overflowValue(sql, stamp.entityId, stamp.rowId, stamp.fieldId)
         if (stored !== undefined) changes.push(Change.make({ ...base, value: stored }))
         continue
@@ -94,29 +93,3 @@ export const changesSince = (
     }
     return { changes, cursor }
   }).pipe(mapStorageErrorMessage('Failed to read changes since the cursor'))
-
-/** Reads a JSON value from overflow for a field without a known column. */
-const overflowValue = (
-  sql: SqlClient.SqlClient,
-  entityId: string,
-  rowId: string,
-  fieldId: string,
-): Effect.Effect<unknown, StorageError> =>
-  sql`
-    SELECT
-      value
-    FROM
-      ${sql(OVERFLOW_TABLE)}
-    WHERE
-      entityId = ${entityId}
-      AND rowId = ${rowId}
-      AND fieldId = ${fieldId}
-    LIMIT
-      1
-  `.pipe(
-    Effect.flatMap(decodeOverflowRows),
-    Effect.map(rows =>
-      rows.length === 0 || rows[0].value === null ? undefined : JSON.parse(rows[0].value),
-    ),
-    mapStorageErrorMessage('Failed to read an overflow value'),
-  )

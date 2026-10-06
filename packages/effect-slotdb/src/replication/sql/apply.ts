@@ -1,11 +1,13 @@
 import * as Effect from 'effect/Effect'
 import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
 import { SqlClient } from 'effect/sql'
 import { mapStorageErrorMessage, StorageError } from '../../errors.ts'
-import type { EntityEntry, FieldEntry, SchemaIndex } from '../../migration'
-import { DEAD_LETTER_TABLE, OVERFLOW_TABLE, decodeRowId } from '../../migration'
+import type { EntityEntry, FieldEntry, FieldId, SchemaIndex } from '../../migration'
+import { DEAD_LETTER_TABLE, decodeRowId } from '../../migration'
 import { Change, type ChangeBatch, Hlc } from '../../changes'
 import { mergeSlot, type Slot } from '../merge.ts'
+import { clearOverflow, overflowSlots, overflowValue, writeOverflow } from './overflow.ts'
 import { getHlc, putHlc } from './stamps.ts'
 
 /**
@@ -35,7 +37,7 @@ export const applyChanges = (
     return winners
   }).pipe(mapStorageErrorMessage('Failed to apply a change'))
 
-/** One row's slots, resolved and merged together so the row is written once. */
+/** Merges a row's slots and writes the accepted values together. */
 const applyRow = (
   sql: SqlClient.SqlClient,
   index: SchemaIndex,
@@ -101,6 +103,7 @@ const applyRow = (
 
     if (Object.keys(columns).length > 0) {
       const written = yield* writeRow(sql, entity, rowId, columns)
+      // Store accepted values in overflow until every required column has a value.
       if (!written) {
         for (const winner of winners) {
           if (entity.fieldsById.has(winner.fieldId)) yield* writeOverflow(sql, winner)
@@ -111,11 +114,11 @@ const applyRow = (
   })
 
 /**
- * Whether two stored values differ, compared the way the write-side diff compares them.
+ * Compares stored values as JSON, matching local write comparisons.
  */
 const changed = (a: unknown, b: unknown): boolean => JSON.stringify(a) !== JSON.stringify(b)
 
-/** Reads a slot from its row, or from pending overflow while the row remains absent. */
+/** Reads a slot from the stored row or from overflow when the row is absent. */
 const storedValue = (
   sql: SqlClient.SqlClient,
   entity: EntityEntry,
@@ -124,27 +127,17 @@ const storedValue = (
 ): Effect.Effect<unknown, StorageError> =>
   Effect.gen(function* () {
     const rows = yield* sql<Record<string, unknown>>`
-    SELECT
-      *
-    FROM
-      ${sql(entity.table)}
-    WHERE
-      __rowId = ${rowId}
-    LIMIT
-      1
-  `
-    if (rows.length > 0) return rows[0][field.column] ?? null
-    const pending = yield* sql<{ readonly value: string }>`
       SELECT
-        value
+        *
       FROM
-        ${sql(OVERFLOW_TABLE)}
+        ${sql(entity.table)}
       WHERE
-        entityId = ${entity.id}
-        AND rowId = ${rowId}
-        AND fieldId = ${field.id}
+        __rowId = ${rowId}
+      LIMIT
+        1
     `
-    return pending.length === 0 ? null : (JSON.parse(pending[0].value) as unknown)
+    if (rows.length > 0) return rows[0][field.column] ?? null
+    return (yield* overflowValue(sql, entity.id, rowId, field.id)) ?? null
   }).pipe(mapStorageErrorMessage('Failed to read a slot'))
 
 /**
@@ -261,51 +254,21 @@ const writeRow = (
       LIMIT
         1
     `
-    const restoredFieldIds: FieldEntry['id'][] = []
+    const restoredFieldIds: Array<FieldId> = []
     if (existing.length === 0) {
-      const pending = yield* sql<{ readonly fieldId: FieldEntry['id']; readonly value: string }>`
-        SELECT
-          fieldId,
-          value
-        FROM
-          ${sql(OVERFLOW_TABLE)}
-        WHERE
-          entityId = ${entity.id}
-          AND rowId = ${rowId}
-      `
+      // Recover key values from the row ID because key field changes can arrive later.
       const values: Record<string, unknown> = {
         __rowId: rowId,
         ...entity.keyColumnValues(decodeRowId(rowId)),
       }
-      for (const slot of pending) {
+      for (const slot of yield* overflowSlots(sql, entity.id, rowId)) {
         const field = entity.fieldsById.get(slot.fieldId)
         if (field === undefined || field.local) continue
-        values[field.column] = JSON.parse(slot.value) as unknown
+        values[field.column] = slot.value
         restoredFieldIds.push(slot.fieldId)
       }
       Object.assign(values, columns)
-      const specs = yield* sql<{
-        readonly name: string
-        readonly notnull: number
-        readonly dflt_value: string | null
-      }>`
-  SELECT
-    name,
-    "notnull",
-    dflt_value
-  FROM
-    pragma_table_info (${entity.table})
-`
-      if (
-        specs.some(
-          spec =>
-            spec.notnull === 1 &&
-            (spec.dflt_value === null || spec.dflt_value.toUpperCase() === 'NULL') &&
-            values[spec.name] === undefined,
-        )
-      ) {
-        return false
-      }
+      if (yield* missingRequiredColumn(sql, entity, values)) return false
       yield* sql`
         INSERT INTO
           ${sql(entity.table)} ${sql.insert(values)}
@@ -323,15 +286,45 @@ const writeRow = (
       const field = entity.fieldByColumnKey(column)
       return field === undefined ? [] : [field.id]
     })
-    yield* sql`
-      DELETE FROM ${sql(OVERFLOW_TABLE)}
-      WHERE
-        entityId = ${entity.id}
-        AND rowId = ${rowId}
-        AND ${sql.in('fieldId', [...restoredFieldIds, ...replacedFieldIds])}
-    `
+    yield* clearOverflow(sql, entity.id, rowId, [...restoredFieldIds, ...replacedFieldIds])
     return true
   }).pipe(mapStorageErrorMessage('Failed to write a row'))
+
+const ColumnInfoRow = Schema.Struct({
+  name: Schema.String,
+  notnull: Schema.Number,
+  dflt_value: Schema.NullOr(Schema.String),
+})
+const decodeColumnInfoRows = Schema.decodeUnknownEffect(Schema.Array(ColumnInfoRow))
+
+/**
+ * Checks for omitted NOT NULL columns without defaults in the physical table.
+ * SQLite retains constraints on retired columns.
+ */
+const missingRequiredColumn = (
+  sql: SqlClient.SqlClient,
+  entity: EntityEntry,
+  values: Record<string, unknown>,
+): Effect.Effect<boolean, StorageError> =>
+  sql`
+    SELECT
+      name,
+      "notnull",
+      dflt_value
+    FROM
+      pragma_table_info (${entity.table})
+  `.pipe(
+    Effect.flatMap(decodeColumnInfoRows),
+    Effect.map(columns =>
+      columns.some(
+        column =>
+          column.notnull === 1 &&
+          (column.dflt_value === null || column.dflt_value.toUpperCase() === 'NULL') &&
+          values[column.name] === undefined,
+      ),
+    ),
+    mapStorageErrorMessage('Failed to read table columns'),
+  )
 
 /**
  * Stores and stamps an unknown field in overflow so other peers can receive the value.
@@ -352,20 +345,3 @@ const storeOverflow = (
     }
     return winners
   })
-
-const writeOverflow = (
-  sql: SqlClient.SqlClient,
-  change: Change,
-): Effect.Effect<void, StorageError> =>
-  sql`
-    INSERT INTO
-      ${sql(OVERFLOW_TABLE)} ${sql.insert({
-        entityId: change.entityId,
-        rowId: change.rowId,
-        fieldId: change.fieldId,
-        value: JSON.stringify(change.value ?? null),
-      })}
-    ON CONFLICT (entityId, rowId, fieldId) DO UPDATE
-    SET
-      value = excluded.value
-  `.pipe(Effect.asVoid, mapStorageErrorMessage('Failed to store a pending field'))

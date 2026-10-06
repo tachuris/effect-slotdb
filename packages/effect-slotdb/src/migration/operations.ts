@@ -40,8 +40,7 @@ type CarryMarkers<Sc, W> = W &
   (IsTombstone<Sc> extends true ? Tombstone<W> : unknown)
 
 /**
- * The concrete fields of a schema that may be a bare `Struct` or a `decodeTo` wrapping
- * one.
+ * Returns the fields of a `Struct` or the target `Struct` of a `decodeTo` schema.
  */
 export const fieldsOf = (source: AnySchema): AnyFields => {
   const s = source as any
@@ -138,7 +137,49 @@ type RemoveSelf<S, F extends string, V> =
             expected: FieldEncoded<S, F>
           }
 
-// --- altering fields ------------------------------------------------------
+/**
+ * Options for target schema `A`. `R` is the retired field's type.
+ * Callback functions prevent serialization of the operation.
+ */
+export interface RetypeOptions<A extends Schema.Constraint, R = unknown> {
+  /** Reads the retired encoded value while the new slot is empty. */
+  readonly decodeFromOld?: (old: unknown) => unknown
+  /** Maps each written value to the retired field's type. */
+  readonly encodeToOld?: (value: A['Type']) => R
+}
+
+/**
+ * Requires an existing field and validates the return type of `encodeToOld`.
+ * Requires `encodeToOld` for NOT NULL columns without defaults.
+ * `R` is `never` when the options omit `encodeToOld`.
+ */
+type RetypeSelf<S, F extends string, R> =
+  HasField<S, F> extends false
+    ? WithField<S, F>
+    : [R] extends [never]
+      ? RequiresFill<S, F> extends true
+        ? {
+            error: `'${F}' has a required column without a default. Pass encodeToOld to fill the retired column`
+          }
+        : S
+      : [R] extends [FieldAt<S, F>['Type']]
+        ? S
+        : {
+            error: `encodeToOld does not return the type of '${F}'`
+            expected: FieldAt<S, F>['Type']
+          }
+
+/** Whether the column of field `F` rejects NULL and has no default. */
+type RequiresFill<S, F extends string> =
+  null extends FieldEncoded<S, F>
+    ? false
+    : undefined extends FieldEncoded<S, F>
+      ? false
+      : IsDefaulted<FieldAt<S, F>> extends true
+        ? false
+        : true
+
+// --- Field operations ---
 
 /** Applies `fn`, such as `local` or `latch`, to every field of a struct. */
 export const mapFields =
@@ -193,14 +234,14 @@ export function migrateSchema(seed: any, ...operations: any[]): any {
 
 // Use `Migration.renameEntity` to change entity names without changing field schemas.
 
-// --- adding fields ---------------------------------------------------------
+// --- Field additions ---
 
 /** Rejects a field name already declared by the source. */
 const requireAbsent = (fields: AnyFields, field: string, op: string): void => {
   if (fields[field] !== undefined) throw new Error(`${op}: field '${field}' already exists`)
 }
 
-/** Adds a required field. Fills `def()` for old rows that lack the field. */
+/** Adds a required field with `def()` as the value for rows that lack the field. */
 export function addRequired<const F extends string, Sc extends Schema.Constraint>(
   field: F,
   schema: Sc,
@@ -302,7 +343,7 @@ export function addOptionalWithDefault(
   }
 }
 
-// --- removing and renaming -------------------------------------------------
+// --- Field removal and renaming ---
 
 /**
  * Removes a field from the current schema while retaining its stored column and retired
@@ -369,7 +410,7 @@ export function rename<From extends string, To extends string>(from: From, to: T
   }
 }
 
-// --- changing a field's type -----------------------------------------------
+// --- Field type changes ---
 
 /**
  * Changes the application type while preserving the stored type, ID, and column. Copies
@@ -405,21 +446,21 @@ export function recodec(
 }
 
 /**
- * Changes the stored type with a new ID and column while retaining the retired slot.
- * `decodeFromOld` reads the retired value when the new slot is empty. The callback
- * prevents serialization of the operation.
+ * Changes the stored type with a new ID and column, retaining the retired slot.
+ * `decodeFromOld` reads the retired value when the new slot is empty.
+ * `encodeToOld` fills the retired slot for peers that know only the retired field.
  */
-export function retype<const F extends string, A extends Schema.Constraint>(
+export function retype<const F extends string, A extends Schema.Constraint, const R = never>(
   field: F,
   target: A,
-  options?: { readonly decodeFromOld?: (old: unknown) => unknown },
+  options?: RetypeOptions<A, R>,
 ): <S extends Schema.Constraint>(
-  self: WithField<S, F>,
+  self: RetypeSelf<S, F, R>,
 ) => Schema.Struct<Simplify<Assign<StructFieldsOf<S>, FieldEntry<F, A>>>>
 export function retype(
   field: string,
   target: Schema.Constraint,
-  options?: { readonly decodeFromOld?: (old: unknown) => unknown },
+  options?: RetypeOptions<Schema.Constraint>,
 ): any {
   return (source: AnySchema) => {
     const fields = fieldsOf(source)
@@ -429,13 +470,14 @@ export function retype(
     const replaced = (target as any).annotate({
       supersedes: [old],
       fallbackDecode: options?.decodeFromOld,
+      fallbackEncode: options?.encodeToOld,
     })
 
     return structFrom({ ...fields, [field]: replaced })
   }
 }
 
-// --- merging and finishing a merge -----------------------------------------
+// --- Field merging and promotion ---
 
 /**
  * Combines two replicated source fields into a derived field. `combine` computes reads
@@ -509,7 +551,7 @@ export function promote(field: string, target: Schema.Constraint): any {
   }
 }
 
-// --- shape fingerprinting --------------------------------------------------
+// --- Schema fingerprints ---
 
 /** Returns a type fingerprint independent of field order and annotations. */
 export const canonicalizeAst = (ast: any): string => {

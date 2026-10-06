@@ -3,8 +3,9 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { SqlClient } from 'effect/sql'
 import { Change, type ChangeBatch, encodeHlcColumn, Hlc, HlcColumn } from '../../changes'
-import { EntityEntry, OVERFLOW_TABLE, STAMPS_TABLE } from '../../migration'
+import { EntityEntry, STAMPS_TABLE } from '../../migration'
 import { mapStorageErrorMessage, StorageError } from '../../errors.ts'
+import { clearOverflow } from './overflow.ts'
 
 /** Stores one HLC stamp per replicated slot for comparing incoming writes. */
 
@@ -86,7 +87,7 @@ export const stampChanges = (
       if (field !== undefined && field.local) {
         return yield* Effect.fail(
           new StorageError({
-            message: `Field "${name}" of "${entity.table}" is local and never replicates`,
+            message: `Field "${name}" of "${entity.table}" is local and cannot be replicated`,
           }),
         )
       }
@@ -96,7 +97,10 @@ export const stampChanges = (
     const changed = yield* Effect.try({
       try: () => entity.encodeChanged(after, before),
       catch: cause =>
-        new StorageError({ message: `Failed to diff a write on "${entity.table}"`, cause }),
+        new StorageError({
+          message: `Failed to compare written and stored values for "${entity.table}"`,
+          cause,
+        }),
     })
 
     const changes: Array<Change> = []
@@ -112,17 +116,12 @@ export const stampChanges = (
       yield* putHlc(sql, entity.id, rowId, field.id, hlc)
       changes.push(Change.make({ entityId: entity.id, rowId, fieldId: field.id, value, hlc }))
     }
-    if (changes.length > 0) {
-      yield* sql`
-        DELETE FROM ${sql(OVERFLOW_TABLE)}
-        WHERE
-          entityId = ${entity.id}
-          AND rowId = ${rowId}
-          AND ${sql.in(
-            'fieldId',
-            changes.map(change => change.fieldId),
-          )}
-      `.pipe(mapStorageErrorMessage('Failed to clear a replaced pending value'))
-    }
+    // Local writes replace stored overflow values for the changed slots.
+    yield* clearOverflow(
+      sql,
+      entity.id,
+      rowId,
+      changes.map(change => change.fieldId),
+    )
     return changes
   })

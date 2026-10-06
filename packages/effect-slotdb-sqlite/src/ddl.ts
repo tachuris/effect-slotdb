@@ -13,7 +13,7 @@ import {
  * stored names and removed fields retain their columns.
  */
 
-// --- column types ----------------------------------------------------------
+// --- Column types ---
 
 const NULL_TAGS = new Set(['Null', 'Undefined'])
 
@@ -44,8 +44,7 @@ export interface ColumnSpec {
   readonly type: 'TEXT' | 'INTEGER'
   readonly notNull: boolean
   /**
-   * The SQL literal as it appears in the DDL, matching `dflt_value`, absent when there is
-   * none.
+   * The default SQL literal, matching `dflt_value`, or undefined without a default.
    */
   readonly defaultLiteral?: string
   readonly primaryKey: boolean
@@ -95,7 +94,7 @@ const renderColumn = (spec: ColumnSpec): string =>
     .filter(part => part !== undefined)
     .join(' ')
 
-// --- tables ----------------------------------------------------------------
+// --- Tables ---
 
 /** Returns all stored columns with the row ID first and other columns sorted by name. */
 export const columnSpecs = (entity: EntityEntry): ReadonlyArray<ColumnSpec> => [
@@ -131,8 +130,8 @@ export const createTable = (entity: EntityEntry): string =>
     .join(',\n')}\n)`
 
 /**
- * The `CREATE UNIQUE INDEX` statement over an entity's natural key, absent when it
- * declares none.
+ * Returns a `CREATE UNIQUE INDEX` statement for the natural key, or an empty array
+ * when the entity has no natural key.
  */
 export const createKeyIndex = (entity: EntityEntry): ReadonlyArray<string> => {
   const index = keyIndexOf(entity)
@@ -158,14 +157,14 @@ export const addColumn = (entity: EntityEntry, field: FieldEntry): string => {
   const spec = specOf(field)
   if (spec.notNull && spec.defaultLiteral === undefined) {
     throw new Error(
-      `schema ddl: '${entity.table}.${field.column}' is added to an existing table and is not ` +
-        `nullable, so it needs a default. Declare one with \`withDefault\`, or make the field nullable.`,
+      `schema ddl: '${entity.table}.${field.column}' requires a default because the column ` +
+        `is nonnullable and the table already exists. Use \`withDefault\` or make the field nullable.`,
     )
   }
   return `ALTER TABLE ${entity.table} ADD COLUMN ${renderColumn(spec)}`
 }
 
-// --- the derivation --------------------------------------------------------
+// --- DDL derivation ---
 
 /** Derived statements for one migration file. */
 export interface DerivedMigration {
@@ -194,19 +193,7 @@ export const deriveMigrations = (chain: readonly Migration[]): ReadonlyArray<Der
         created.push(createTable(entity), ...createKeyIndex(entity), ...createUniqueIndex(entity))
         continue
       }
-      for (const id of entity.retiredFields) {
-        if (previous.retiredFields.has(id)) continue
-        const source = previous.fieldsById.get(id)
-        if (source === undefined) continue
-        const spec = specOf(source)
-        if (spec.notNull && spec.defaultLiteral === undefined) {
-          throw new Error(
-            `schema ddl: retiring '${entity.table}.${source.column}' leaves a NOT NULL column ` +
-              `without a default. Declare a source column default with \`withDefault\` before ` +
-              `retiring the field, or make the source nullable. A replacement default does not fill the source column.`,
-          )
-        }
-      }
+      requireFilledRetiredColumns(entity)
       for (const field of entity.columnFields) {
         if (previous.fieldsById.has(field.id)) {
           continue
@@ -233,12 +220,38 @@ export const deriveMigrations = (chain: readonly Migration[]): ReadonlyArray<Der
   })
 
 /**
- * Every statement a chain produces, in migration order.
- * The whole schema, for a fresh database.
+ * Rejects retired NOT NULL columns without defaults unless a live field fills those
+ * columns through `encodeToOld`. SQLite retains the constraints on retired columns.
+ */
+const requireFilledRetiredColumns = (entity: EntityEntry): void => {
+  for (const id of entity.retiredFields) {
+    const retired = entity.fieldsById.get(id)!
+    const spec = specOf(retired)
+    if (!spec.notNull || spec.defaultLiteral !== undefined) continue
+    if (filledByLiveField(entity, id)) continue
+    throw new Error(
+      `schema ddl: retiring '${entity.table}.${retired.column}' leaves a NOT NULL column ` +
+        `without a default or a live field that fills the column. Retype with \`encodeToOld\`, ` +
+        `declare a source default with \`withDefault\`, or make the source nullable.`,
+    )
+  }
+}
+
+/** Checks whether a live field fills slot `id` through an `encodeToOld` chain. */
+const filledByLiveField = (entity: EntityEntry, id: FieldEntry['id']): boolean =>
+  [...entity.fieldsById.values()].some(
+    field =>
+      field.fallbackEncode !== undefined &&
+      field.supersedes?.includes(id) === true &&
+      (field.currentName !== undefined || filledByLiveField(entity, field.id)),
+  )
+
+/**
+ * Returns all statements for creating a fresh database, in migration order.
  */
 export const deriveDdl = (chain: readonly Migration[]): ReadonlyArray<string> =>
   deriveMigrations(chain).flatMap(m => m.statements)
 
-/** The tables the derivation owns, which the boot guard is entitled to check. */
+/** Returns derived table names for the startup schema check. */
 export const managedTables = (index: SchemaIndex): ReadonlyArray<string> =>
   [...index.entities.values()].map(e => e.table).sort()
