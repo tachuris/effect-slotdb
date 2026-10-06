@@ -25,7 +25,7 @@ A replicated store for [Effect](https://effect.website) with a SQLite implementa
 
 ## Required columns and retypes
 
-SQLite retains a retired column's `NOT NULL` constraint, so each insert must still fill a retired column that is `NOT NULL` without a default. Pass `encodeToOld` to `retype` for such a field. `encodeToOld` maps each written value, including the new field's default, to the retired field's type, and the store writes and replicates both slots. Peers that know only the retired field then read and insert the row. The `retype` type requires `encodeToOld` when the source field is required without a default.
+SQLite retains a retired column's `NOT NULL` constraint, so each insert must still fill a retired column that is `NOT NULL` without a default. Pass `encodeToOld` to `retype` for such a field. `encodeToOld` maps each written value, including the new field's default, to the retired field's type, and the store writes and replicates both slots. Peers that know only the retired field then read and insert the row. The `retype` type requires `encodeToOld` when the source field is required without a default. `retype` also requires `encodeToOld` with `decodeFromOld` so writes update both slots. To clear a nullable retired slot, return `null` or `undefined` from `encodeToOld`. A retired `NOT NULL` column must retain a value. When the new column is `NULL`, reads return `decodeFromOld(encodeToOld(value))`.
 
 DDL derivation rejects a retired `NOT NULL` column without a default when no live field fills it through `encodeToOld`. `remove` cannot fill a column, so derivation also rejects removal of such a field and removal of the live field that fills it. Do not edit an applied migration to add a default.
 

@@ -141,12 +141,22 @@ type RemoveSelf<S, F extends string, V> =
  * Options for target schema `A`. `R` is the retired field's type.
  * Callback functions prevent serialization of the operation.
  */
-export interface RetypeOptions<A extends Schema.Constraint, R = unknown> {
-  /** Reads the retired encoded value while the new slot is empty. */
-  readonly decodeFromOld?: (old: unknown) => unknown
-  /** Maps each written value to the retired field's type. */
-  readonly encodeToOld?: (value: A['Type']) => R
-}
+export type RetypeOptions<A extends Schema.Constraint, R = unknown> =
+  | {
+      readonly decodeFromOld?: undefined
+      /** Maps each written value to the retired field's type. */
+      readonly encodeToOld?: (value: A['Type']) => R
+    }
+  | {
+      /** Decodes the retired value when the new column is missing or NULL. */
+      readonly decodeFromOld: (old: unknown) => unknown
+      /**
+       * Maps written values to the retired field's type. Required with `decodeFromOld`.
+       * Returning null or undefined clears a nullable slot. A NOT NULL slot must retain
+       * a value for fallback reads through `decodeFromOld`.
+       */
+      readonly encodeToOld: (value: A['Type']) => R
+    }
 
 /**
  * Requires an existing field and validates the return type of `encodeToOld`.
@@ -292,7 +302,7 @@ export function addNullOr(field: string, schema: Schema.Constraint): any {
   }
 }
 
-/** Adds an optional field that permits old rows without the field to decode. */
+/** Adds an optional field so rows without the field can decode. */
 export function addOptional<const F extends string, Sc extends Schema.Constraint>(
   field: F,
   schema: Sc,
@@ -446,9 +456,9 @@ export function recodec(
 }
 
 /**
- * Changes the stored type with a new ID and column, retaining the retired slot.
- * `decodeFromOld` reads the retired value when the new slot is empty.
- * `encodeToOld` fills the retired slot for peers that know only the retired field.
+ * Changes the stored type with a new ID and column while retaining the retired slot.
+ * `decodeFromOld` reads the retired value when the new column is missing or NULL.
+ * `encodeToOld` updates the retired slot and is required with `decodeFromOld`.
  */
 export function retype<const F extends string, A extends Schema.Constraint, const R = never>(
   field: F,
@@ -465,6 +475,9 @@ export function retype(
   return (source: AnySchema) => {
     const fields = fieldsOf(source)
     const old = requireId(fields, field, 'retype')
+    if (options?.decodeFromOld !== undefined && options.encodeToOld === undefined) {
+      throw new Error(`retype: field '${field}' requires encodeToOld with decodeFromOld`)
+    }
 
     // Omit fieldId so derivation assigns a new identity.
     const replaced = (target as any).annotate({

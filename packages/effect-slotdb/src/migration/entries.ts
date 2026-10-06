@@ -17,7 +17,7 @@ interface FieldEntryFields {
   readonly birthName: string
   readonly bornIn: string
   readonly column: string
-  /** The current application name, absent once the field leaves the shape. */
+  /** The current application name, absent for fields outside the current shape. */
   readonly currentName?: string
   readonly kind: 'stored' | 'derived'
   readonly policy: MergePolicy
@@ -27,7 +27,7 @@ interface FieldEntryFields {
   readonly uniquePosition?: number
   /** Whether the field has a stored column but is excluded from replication. */
   readonly local: boolean
-  /** The encoded literal a column defaults to, absent when the field declares none. */
+  /** The encoded column default, absent for fields without a default. */
   readonly columnDefault?: unknown
   readonly materialize: boolean
   /** The framework's field role, absent for fields written by the application. */
@@ -40,7 +40,7 @@ interface FieldEntryFields {
   readonly fallbackEncode?: (value: unknown) => unknown
   readonly combine?: (a: unknown, b: unknown) => unknown
   readonly split?: (value: unknown) => readonly [unknown, unknown]
-  /** The members an open literal union declares, absent for any other stored type. */
+  /** The declared members of an open literal union, absent for other stored types. */
   readonly openMembers?: ReadonlyArray<string>
   /** The encoded type fingerprint used to compare stored field types. */
   readonly typeFingerprint: string
@@ -58,8 +58,7 @@ export class FieldEntry extends Data.Class<FieldEntryFields> {
   #encode?: (value: unknown) => unknown
 
   decodeField(raw: unknown): unknown {
-    // Decode SQL NULL as undefined for an optional field.
-    // SQL uses NULL for absent column values, while optional schemas use undefined.
+    // SQL represents absent values as NULL. Optional schemas use undefined.
     const value =
       raw === null && acceptsUndefined((this.schema as { readonly ast?: unknown }).ast)
         ? undefined
@@ -277,14 +276,15 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
       }
 
       const raw = row[field.column]
-      if (raw !== undefined) {
+      if (raw !== undefined && raw !== null) {
         out[name] = field.decodeField(raw)
         continue
       }
 
-      // Read a superseded slot while the replacement slot is empty.
+      // Read a retired slot when the replacement column is missing or NULL.
       const fallback = this.#supersededValue(row, field)
       if (fallback !== undefined) out[name] = fallback
+      else if (raw === null) out[name] = field.decodeField(raw)
     }
 
     return out
@@ -341,8 +341,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
       throw new Error(`migration: '${this.name}.${name}' is derived and has no split`)
     }
 
-    // Write derived field edits to source columns so peers without the derived field
-    // converge.
+    // Write edits to source columns so peers without the derived field receive the edits.
     const [a, b] = field.split!(value)
     const [left, right] = field.derivedFrom!
     return {
@@ -356,7 +355,8 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
    * know only a superseded field can read and insert rows using the superseded slot.
    */
   #encodeStored(field: FieldEntry, value: unknown): Record<string, unknown> {
-    const out: Record<string, unknown> = { [field.column]: field.encodeField(value) }
+    // Store absent optional values as SQL NULL to match `decodeField`.
+    const out: Record<string, unknown> = { [field.column]: field.encodeField(value) ?? null }
     if (field.fallbackEncode === undefined || field.supersedes === undefined) return out
     const oldValue = field.fallbackEncode(value)
     for (const id of field.supersedes) {

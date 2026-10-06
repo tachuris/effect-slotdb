@@ -90,7 +90,7 @@ describe('addOptional', () => {
     } = {} as UserWithEmail
   })
 
-  it('refuses a name the shape already holds', () => {
+  it('rejects a field name already in the shape', () => {
     // Reject replacement of a live field without an explicit retype.
     // @ts-expect-error
     expect(() => User.pipe(addOptional('name', Schema.String))).toThrow(
@@ -140,7 +140,7 @@ describe('addNullOr', () => {
     } = {} as UserWithEmail
   })
 
-  it('refuses a name the shape already holds', () => {
+  it('rejects a field name already in the shape', () => {
     // @ts-expect-error
     expect(() => User.pipe(addNullOr('name', Schema.String))).toThrow(
       "addNullOr: field 'name' already exists",
@@ -181,7 +181,7 @@ describe('addRequired', () => {
     } = {} as UserWithCreatedAt
   })
 
-  it('refuses a name the shape already holds', () => {
+  it('rejects a field name already in the shape', () => {
     // @ts-expect-error
     expect(() => User.pipe(addRequired('name', Schema.String, () => ''))).toThrow(
       "addRequired: field 'name' already exists",
@@ -208,7 +208,7 @@ describe('addOptionalWithDefault', () => {
     ).toEqual({ id: 'u3', name: 'Cara', email: 'cara@x' })
   })
 
-  it('re-emits the field on encode, default filled then round-tripped', () => {
+  it('encodes the default value supplied during decoding', () => {
     const decoded = Schema.decodeUnknownSync(UserWithEmailDefault)(oldRow)
     expect(Schema.encodeUnknownSync(UserWithEmailDefault)(decoded)).toEqual({
       id: 'u1',
@@ -226,7 +226,7 @@ describe('addOptionalWithDefault', () => {
     } = {} as UserWithEmailDefault
   })
 
-  it('refuses a name the shape already holds', () => {
+  it('rejects a field name already in the shape', () => {
     // @ts-expect-error
     expect(() => User.pipe(addOptionalWithDefault('name', Schema.String, () => ''))).toThrow(
       "addOptionalWithDefault: field 'name' already exists",
@@ -275,7 +275,7 @@ describe('remove', () => {
     )
   })
 
-  it('names the field it could not find, since dropping nothing would pass silently', () => {
+  it('includes the unknown field name in the error', () => {
     // @ts-expect-error
     expect(() => User.pipe(remove('missing'))).toThrow("remove: unknown field 'missing'")
   })
@@ -293,7 +293,7 @@ describe('rename', () => {
     expect(Schema.encodeUnknownSync(UserRenamed)(decoded)).toEqual({ id: 'u1', name: 'Alice' })
   })
 
-  it('names the field it could not find, rather than failing deeper down', () => {
+  it('includes the unknown field name in the error', () => {
     // @ts-expect-error
     expect(() => User.pipe(rename('missing', 'other'))).toThrow("rename: unknown field 'missing'")
   })
@@ -322,7 +322,7 @@ describe('retype', () => {
     expect(annotationsOf(fields.first).supersedes).toEqual(['0000000000000002'])
   })
 
-  it('records a fallback lens when one is declared', () => {
+  it('records decodeFromOld when supplied', () => {
     const withFallback = Stamped.pipe(
       retype('first', Schema.Number, { decodeFromOld: s => Number(s), encodeToOld: String }),
     )
@@ -347,6 +347,13 @@ describe('retype', () => {
       kind: withDefault('a')(Schema.String.annotate({ fieldId: FieldId.make('0000000000000005') })),
     })
     Optional.pipe(retype('note', Schema.Number), retype('kind', Schema.Number))
+  })
+
+  it('requires encodeToOld with decodeFromOld', () => {
+    expect(() =>
+      // @ts-expect-error: decodeFromOld requires encodeToOld to update the retired slot
+      Stamped.pipe(retype('first', Schema.Number, { decodeFromOld: s => Number(s) })),
+    ).toThrow('requires encodeToOld with decodeFromOld')
   })
 
   it('refuses a field that has no assigned ID', () => {
@@ -386,7 +393,7 @@ describe('recodec', () => {
     })
   })
 
-  it('keeps the id, since the stored bytes never change', () => {
+  it('preserves the field ID when the stored type is unchanged', () => {
     // Preserve the field ID when the stored representation remains unchanged.
     expect(annotationsOf(fieldsOf(Recoded).first).fieldId).toBe('0000000000000002')
   })
@@ -426,7 +433,7 @@ describe('mergeFields', () => {
     expect(fieldNames(Merged)).toEqual(['id', 'full'])
   })
 
-  it('records the source ids and the projection on the target', () => {
+  it('records the source IDs and the projection on the target', () => {
     const target = annotationsOf(fieldsOf(Merged).full)
     expect(target.derivedFrom).toEqual(['0000000000000002', '0000000000000003'])
     expect(target.combine!('Ada', 'Lovelace')).toBe('Ada Lovelace')
@@ -473,7 +480,7 @@ describe('promote', () => {
     expect(() => Stamped.pipe(promote('first', Schema.String))).toThrow('not a derived field')
   })
 
-  it('refuses a field the shape does not hold', () => {
+  it('rejects a field absent from the shape', () => {
     // @ts-expect-error
     expect(() => Stamped.pipe(promote('missing', Schema.String))).toThrow('promote: unknown field')
   })
@@ -492,7 +499,7 @@ describe('mapFields', () => {
     expect(annotationsOf(fieldsOf(Localized).name).local).toBe(true)
   })
 
-  it('leaves the shape alone, since an annotation is not part of it', () => {
+  it('preserves the shape when applying annotations', () => {
     expect(shapeOf(Localized)).toBe(shapeOf(User))
   })
 
@@ -509,7 +516,7 @@ describe('seed', () => {
     expect(seeded.schema).toBe(User)
   })
 
-  it('states one operation that ignores its input, so a fold starts from nothing', () => {
+  it('returns one operation that produces the seed schema regardless of input', () => {
     expect(seeded.operations).toHaveLength(1)
     expect(seeded.operations[0]()).toBe(User)
   })
@@ -545,7 +552,7 @@ describe('migrateSchema', () => {
     } = {} as Migrated
   })
 
-  it('applies four operations, the arity a migration adding four fields at once needs', () => {
+  it('applies four operations in order', () => {
     const four = migrateSchema(
       User,
       addRequired('a', Schema.String, () => 'a'),

@@ -34,7 +34,7 @@ describe('reading through the index', () => {
     expect(decoded.archived).toBe(false)
   })
 
-  it('omits a field whose column holds nothing', () => {
+  it('omits a field whose column is missing', () => {
     expect(Object.keys(notes.decode({ title: 'Deep work' }))).toEqual(['title'])
   })
 })
@@ -58,9 +58,8 @@ describe('writing through the index', () => {
     expect(notes.encodeChanged({ title: 'Deep work' }, { title: 'Deep work' })).toEqual({})
   })
 
-  it('encoding includes unchanged fields while diffing omits them', () => {
+  it('includes unchanged fields in encodeAll and omits them in encodeChanged', () => {
     // Rewriting unchanged fields would assign new stamps that overwrite concurrent edits.
-    // Compare encoding with diffing to verify that unchanged fields are omitted.
     const stored = { title: 'Deep work' }
 
     expect(notes.encodeAll({ title: 'Deep work' })).toEqual({ title: 'Deep work' })
@@ -156,7 +155,7 @@ describe('superseded slots', () => {
       entities: {
         doc: migrateSchema(
           shapeOf([born, sized], 'doc'),
-          retype('size', Schema.Number, { decodeFromOld: s => Number(s) }),
+          retype('size', Schema.Number, { decodeFromOld: s => Number(s), encodeToOld: String }),
         ),
       },
     },
@@ -166,13 +165,17 @@ describe('superseded slots', () => {
   // Decode using the column result keys returned by the client.
   const [oldColumn, newColumn] = doc.selectColumns.filter(c => c.startsWith('size'))
 
-  it('reads the retired slot while the new one is empty', () => {
-    // Read the retired slot while the replacement slot is empty.
+  it('reads the retired slot when the new column is missing', () => {
     const decoded = doc.decode({ id: 'd1', [oldColumn]: '7' })
     expect(decoded.size).toBe(7)
   })
 
-  it('prefers the new slot once it holds a value', () => {
+  it('reads the retired slot when the new column is NULL', () => {
+    const decoded = doc.decode({ id: 'd1', [oldColumn]: '7', [newColumn]: null })
+    expect(decoded.size).toBe(7)
+  })
+
+  it('prefers the new slot when both slots have values', () => {
     const decoded = doc.decode({ id: 'd1', [oldColumn]: '7', [newColumn]: 9 })
     expect(decoded.size).toBe(9)
   })
@@ -197,7 +200,7 @@ describe('model fields', () => {
     expect(fields.id).toBeUndefined()
   })
 
-  it('omits every framework field, none of which a caller hands over', () => {
+  it('omits framework fields from the model schema', () => {
     expect(fields.deletedAt).toBeUndefined()
     expect(fields.createdAt).toBeUndefined()
   })
@@ -213,7 +216,7 @@ describe('model fields', () => {
 })
 
 describe('local fields', () => {
-  it('are read and written like any other, since only the wire ignores them', () => {
+  it('supports reads and writes for local fields', () => {
     const notes = FIXTURE_INDEX.entity('notes')
     expect(notes.selectColumns).toContain('openedAt')
 
@@ -249,12 +252,12 @@ describe('the unique tuple', () => {
     expect(pair(1, 2).uniqueColumns).toEqual(['host', 'path'])
   })
 
-  it('refuses two fields at one position, which would leave the order undecided', () => {
+  it('rejects duplicate unique positions', () => {
     // Duplicate positions make index and read ordering ambiguous.
     expect(() => pair(1, 1)).toThrow(/two unique fields at one position/)
   })
 
-  it('drops a field that leaves the shape, since nothing writes it any more', () => {
+  it('omits removed fields from the unique tuple', () => {
     const born = {
       file: '0000',
       entities: {

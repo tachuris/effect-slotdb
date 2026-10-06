@@ -153,7 +153,7 @@ describe('annotations remain after schema operations', () => {
     expect(idsOf(Base.pipe(addOptional('notes', Schema.String))).get('notes')).toBeUndefined()
   })
 
-  it('an annotation does not perturb the shape', () => {
+  it('annotations do not change the shape fingerprint', () => {
     const plain = Schema.Struct({ a: Schema.String })
     const annotated = Schema.Struct({
       a: Schema.String.annotate({ fieldId: FieldId.make('0000000000000009') }),
@@ -161,7 +161,7 @@ describe('annotations remain after schema operations', () => {
     expect(canonicalizeAst(plain.ast)).toBe(canonicalizeAst(annotated.ast))
   })
 
-  it('reads a decodeTo through to its target, which is where a recodec puts the id', () => {
+  it('reads the field ID annotation from the decodeTo target', () => {
     // Read target annotations to avoid assigning a new ID to an unchanged stored type.
     const source = (Schema.String as any).annotate({ fieldId: 'source-id' })
     const target = (Schema.Number as any).annotate({ fieldId: 'target-id' })
@@ -175,8 +175,8 @@ describe('annotations remain after schema operations', () => {
   })
 })
 
-describe('ids are derived, never authored', () => {
-  it('two peers on different chain prefixes agree on shared ids', () => {
+describe('derived IDs', () => {
+  it('peers with different chain prefixes derive the same shared field IDs', () => {
     // Peers use different field names after a rename but address the same field ID.
     const early = doc(2)
     const late = doc(5)
@@ -241,7 +241,7 @@ describe('entities', () => {
     expect(entity.liveFieldIds.get('name')).toBe(doc(5).liveFieldIds.get('name'))
   })
 
-  it('a renamed entity keeps every field id underneath it', () => {
+  it('an entity rename preserves all field IDs', () => {
     const before = doc(5)
     const after = renamed.byName.get('record')!
     expect([...after.fieldsById.keys()].sort()).toEqual([...before.fieldsById.keys()].sort())
@@ -278,30 +278,30 @@ describe('appending a file to a chain', () => {
   const _document: { readonly id: string; readonly notes?: string } =
     {} as typeof second.schemas.document.Type
 
-  it('returns the chain with the file on the end, in order', () => {
+  it('appends the migration after existing migrations', () => {
     expect(second.chain).toEqual([born, later])
   })
 
-  it('reads the shapes at that point, so the next file can seed from them', () => {
+  it('exposes the schemas after the appended migration', () => {
     expect(Object.keys(fieldsOf(second.schemas.document))).toEqual(['id', 'notes'])
   })
 
-  it('leaves the chain it was given alone', () => {
+  it('preserves the source chain', () => {
     expect(first.chain).toEqual([born])
   })
 
-  it('starts from nothing, which is how the first file gets appended', () => {
+  it('initializes the schema from the seed migration', () => {
     expect(Object.keys(fieldsOf(first.schemas.document))).toEqual(['id'])
   })
 })
 
-describe('columns are append-only', () => {
-  it('a plain birth name claims a plain column, and a rename does not move it', () => {
+describe('column names', () => {
+  it('a field rename preserves the column derived from the birth name', () => {
     const entity = doc(5)
     expect(entity.fieldsById.get(entity.liveFieldIds.get('name')!)!.column).toBe('title')
   })
 
-  it('a second claimant on a name gets a suffix, and the first keeps its column', () => {
+  it('a reused field name gets a suffixed column and preserves the retired column', () => {
     const readded = schemaIndex
       .appendMigration({
         file: '0005',
@@ -411,19 +411,19 @@ describe('recodec keeps identity, retype replaces it', () => {
     })
     .byName.get('document')!
 
-  it('recodec leaves the id, the column, and the encoded fingerprint alone', () => {
+  it('recodec preserves the ID, column, and stored type fingerprint', () => {
     const before = doc(5).fieldsById.get(fieldIdOf('notes', '0004'))!
     const after = recoded.fieldsById.get(fieldIdOf('notes', '0004'))!
 
     expect(after.id).toBe(before.id)
     expect(after.column).toBe(before.column)
-    // The app type changed, so the decoded shape differs.
+    // The application type differs from the stored type.
     expect(Schema.decodeUnknownSync(after.schema as any)('42')).toBe(42)
-    // The stored type did not, so the drift check sees nothing.
+    // An unchanged stored type preserves the fingerprint.
     expect(after.fingerprint).toBe(before.fingerprint)
   })
 
-  it('recodec round-trips back to the stored representation', () => {
+  it('recodec encodes the application value to the stored representation', () => {
     const after = recoded.fieldsById.get(fieldIdOf('notes', '0004'))!
     expect(Schema.encodeUnknownSync(after.schema as any)(42)).toBe('42')
   })
@@ -437,21 +437,21 @@ describe('recodec keeps identity, retype replaces it', () => {
     expect(retyped.fieldsById.get(fresh)!.supersedes).toEqual([old])
   })
 
-  it('retype gives the new field its own column, leaving the old one populated', () => {
+  it('retype assigns a new column and preserves the retired column', () => {
     expect(retyped.fieldsById.get(fieldIdOf('notes', '0004'))!.column).toBe('notes')
     expect(retyped.fieldsById.get(retyped.liveFieldIds.get('notes')!)!.column).toMatch(
       /^notes_[0-9a-f]{8}$/,
     )
   })
 
-  it('a retype fallback lens is reachable through supersedes', () => {
+  it('retype records the retired field ID and decodeFromOld callback', () => {
     const withFallback = schemaIndex
       .appendMigration({
         file: '0005',
         entities: {
           document: migrateSchema(
-            doc(5).schema,
-            retype('notes', Schema.Number, { decodeFromOld: s => Number(s) }),
+            m0004.schemas.document,
+            retype('notes', Schema.Number, { decodeFromOld: s => Number(s), encodeToOld: String }),
           ),
         },
       })
@@ -463,7 +463,7 @@ describe('recodec keeps identity, retype replaces it', () => {
   })
 })
 
-describe('promote finishes a merge', () => {
+describe('promote', () => {
   const promoted = schemaIndex
     .appendMigration({
       file: '0005',
@@ -477,7 +477,7 @@ describe('promote finishes a merge', () => {
     expect(promoted.syncedSources.has(first)).toBe(false)
   })
 
-  it('makes the target stored, with its own id and a link to the sources', () => {
+  it('stores the target and records the superseded source IDs', () => {
     const target = promoted.fieldsById.get(promoted.liveFieldIds.get('fullName')!)!
     expect(target.kind).toBe('stored')
     expect(target.supersedes).toEqual([
@@ -548,7 +548,7 @@ describe('merge policies', () => {
     expect(added.fieldsById.get(added.liveFieldIds.get('steps')!)!.policy).toBe('union')
   })
 
-  it('folds the policy into the fingerprint, so changing one reads as drift', () => {
+  it('includes the merge policy in the fingerprint', () => {
     const asLww = new SchemaIndex([
       {
         file: '0000',
@@ -563,7 +563,7 @@ describe('merge policies', () => {
   })
 })
 
-describe('a unique declaration stays out of what the lockfile records', () => {
+describe('unique declarations', () => {
   // Unique declarations affect local writes and indexes, not replication fingerprints.
   // Peers with different local uniqueness declarations still converge.
   const withMarker = (declare: <S extends Schema.Top>(schema: S) => Schema.Top) =>
@@ -581,7 +581,7 @@ describe('a unique declaration stays out of what the lockfile records', () => {
   const plain = withMarker(schema => schema)
   const marked = withMarker(unique(1))
 
-  it('leaves the field fingerprint alone', () => {
+  it('preserves the field fingerprint', () => {
     const host = (index: SchemaIndex) => {
       const entity = index.entity('bookmarks')
       return entity.fieldsById.get(entity.liveFieldIds.get('host')!)!
@@ -590,13 +590,13 @@ describe('a unique declaration stays out of what the lockfile records', () => {
     expect(host(marked).fingerprint).toBe(host(plain).fingerprint)
   })
 
-  it('leaves the whole lockfile alone, so declaring it produces no diff to review', () => {
+  it('preserves the lockfile contents', () => {
     expect(marked.lockfile()).toBe(plain.lockfile())
   })
 })
 
 describe('the lockfile', () => {
-  it('is deterministic and records identity, columns, and fingerprints', () => {
+  it('records entity identity, column names, renames, and retired fields', () => {
     const lock = upto(5).lockfile()
     expect(lock).toContain('entity document')
     expect(lock).toContain('column=title')
@@ -617,10 +617,10 @@ describe('the lockfile', () => {
   })
 })
 
-describe('the lookups over the ledger', () => {
+describe('index lookups', () => {
   // Use the fixture index to exercise the instance exposed to consumers.
 
-  it('has nothing for an id this build never knew', () => {
+  it('returns undefined for unknown field and entity IDs', () => {
     // An unknown ID is valid and has no lookup entry.
     expect(
       FIXTURE_INDEX.entity('notes').fieldsById.get(FieldId.make('deadbeefdeadbeef')),
@@ -632,7 +632,7 @@ describe('the lookups over the ledger', () => {
     expect(FIXTURE_INDEX.entity('notes')).toBe(FIXTURE_INDEX.byName.get('notes'))
   })
 
-  it('names the entity a caller asked for when the chain declares none', () => {
+  it('includes the unknown entity name in the error', () => {
     expect(() => FIXTURE_INDEX.entity('ghost')).toThrow("unknown entity 'ghost'")
   })
 
@@ -640,7 +640,7 @@ describe('the lookups over the ledger', () => {
     expect(FIXTURE_INDEX.entityForTable('notes')).toBe(FIXTURE_INDEX.entity('notes'))
   })
 
-  it('names the table a caller asked for when no entity declares it', () => {
+  it('includes the unknown table name in the error', () => {
     expect(() => FIXTURE_INDEX.entityForTable('ghosts')).toThrow(
       "no entity declares table 'ghosts'",
     )
