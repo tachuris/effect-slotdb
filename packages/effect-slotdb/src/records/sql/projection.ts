@@ -31,7 +31,8 @@ export const projectionOf = <E extends EntityEntry<any>, K extends keyof RowOf<E
     const key = field.column
     const column = `${alias}.${field.column}`
     const { columnDefault } = field
-    if (options.coalesceDefaults && columnDefault != null) {
+    // Leave NULL in a column with a fallback so decoding can read the superseded slot.
+    if (options.coalesceDefaults && columnDefault != null && field.fallbackDecode === undefined) {
       columns.push(
         Statement.fragment([
           Statement.literal(`COALESCE(${column}, ?) AS "${key}"`, [columnDefault]),

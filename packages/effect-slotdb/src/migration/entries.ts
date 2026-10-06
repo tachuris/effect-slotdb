@@ -4,12 +4,17 @@ import { FrameworkRole, MergePolicy } from './annotations.ts'
 import { EntityId, FieldId } from './ids.ts'
 import { EntityName } from './migration.ts'
 
-const acceptsUndefined = (ast: unknown): boolean => {
-  if (ast === undefined) return false
-  if ((ast as { readonly _tag?: string })._tag === 'Undefined') return true
-  const types = (ast as { readonly types?: ReadonlyArray<unknown> }).types
-  return types === undefined ? false : types.some(acceptsUndefined)
-}
+const acceptsTag =
+  (tag: 'Null' | 'Undefined') =>
+  (ast: unknown): boolean => {
+    if (ast === undefined) return false
+    if ((ast as { readonly _tag?: string })._tag === tag) return true
+    const types = (ast as { readonly types?: ReadonlyArray<unknown> }).types
+    return types === undefined ? false : types.some(acceptsTag(tag))
+  }
+
+const acceptsUndefined = acceptsTag('Undefined')
+const acceptsNull = acceptsTag('Null')
 
 interface FieldEntryFields {
   readonly id: FieldId
@@ -66,6 +71,12 @@ export class FieldEntry extends Data.Class<FieldEntryFields> {
     // The parser accepts the field schema despite the broader derived schema type.
     this.#decode ??= Schema.decodeUnknownSync(this.schema as Schema.Codec<unknown, unknown>)
     return this.#decode(value)
+  }
+
+  /** Whether the field decodes SQL NULL, as a nullable or optional field does. */
+  acceptsAbsent(): boolean {
+    const ast = (this.schema as { readonly ast?: unknown }).ast
+    return acceptsNull(ast) || acceptsUndefined(ast)
   }
 
   encodeField(value: unknown): unknown {
@@ -281,18 +292,19 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
         continue
       }
 
-      // Read a retired slot when the replacement column is missing or NULL.
+      // Read a retired slot when the replacement column is missing or NULL. A required
+      // field with a fallback has no SQL default, so decoding applies the field default.
       const fallback = this.#supersededValue(row, field)
       if (fallback !== undefined) out[name] = fallback
-      else if (raw === null) out[name] = field.decodeField(raw)
+      else if (raw === null) out[name] = field.decodeField(this.#unwrittenValue(field))
     }
 
     return out
   }
 
   /**
-   * Adds defaults for omitted fields with `encodeToOld` so new rows also fill the
-   * superseded columns.
+   * Adds the default or absent value of omitted fields with `encodeToOld`, so new rows
+   * fill the superseded columns instead of leaving the column defaults there.
    */
   withSupersededDefaults(row: Record<string, unknown>): Record<string, unknown> {
     const out = { ...row }
@@ -300,6 +312,7 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
       const name = field.currentName!
       if (name in out || field.fallbackEncode === undefined) continue
       if (field.columnDefault !== undefined) out[name] = field.decodeField(field.columnDefault)
+      else if (field.acceptsAbsent()) out[name] = field.decodeField(null)
     }
     return out
   }
@@ -368,6 +381,11 @@ export class EntityEntry<_Fields = unknown> extends Data.Class<EntityEntryFields
   #valueOf(row: Record<string, unknown>, id: FieldId): unknown {
     const field = this.fieldsById.get(id)
     return field === undefined ? undefined : row[field.column]
+  }
+
+  #unwrittenValue(field: FieldEntry): unknown {
+    if (field.fallbackDecode === undefined || field.acceptsAbsent()) return null
+    return field.columnDefault ?? null
   }
 
   /** Decodes the first populated superseded slot through `decodeFromOld`. */

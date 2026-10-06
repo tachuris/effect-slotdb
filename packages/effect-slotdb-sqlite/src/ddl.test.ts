@@ -15,6 +15,7 @@ import {
   seed,
   shapeOf,
   STAMPS_TABLE,
+  withDefault,
 } from '@tachuris/effect-slotdb/migration'
 import { FIXTURE_INDEX } from './testing.ts'
 import { makeInMemorySqliteLayer } from './testing.ts'
@@ -337,6 +338,28 @@ describe('one migration per chain file', () => {
       },
     ]
     expect(() => deriveMigrations(bad)).toThrow(/'note\.body/)
+  })
+
+  it('adds a retype column with a fallback as nullable without a default', () => {
+    // NULL marks a slot the new field has not written, so reads use the retired slot.
+    const retyped: readonly Migration[] = [
+      born,
+      {
+        file: '0001',
+        entities: {
+          note: migrateSchema(
+            stamped,
+            retype('body', withDefault(0)(Schema.Number), {
+              decodeFromOld: body => Number(body),
+              encodeToOld: body => String(body),
+            }),
+          ),
+        },
+      },
+    ]
+    expect(deriveMigrations(retyped)[1].statements).toEqual([
+      expect.stringMatching(/^ALTER TABLE note ADD COLUMN \w+ INTEGER$/),
+    ])
   })
 
   it('accepts a new nonnullable column with a default', () => {

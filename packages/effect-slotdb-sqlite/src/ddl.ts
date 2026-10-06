@@ -72,13 +72,18 @@ const defaultLiteralOf = (field: FieldEntry): string | undefined => {
  */
 const ROW_ID: ColumnSpec = { name: '__rowId', type: 'TEXT', notNull: true, primaryKey: true }
 
+/**
+ * Leaves a column with a `decodeFromOld` fallback nullable and without a default, so NULL
+ * marks an unwritten slot. Reads then apply the fallback, then the field default.
+ */
 const specOf = (field: FieldEntry): ColumnSpec => {
   const { type, nullable } = columnType(field)
+  const hasFallback = field.fallbackDecode !== undefined
   return {
     name: field.column,
     type: type as ColumnSpec['type'],
-    notNull: !nullable,
-    defaultLiteral: defaultLiteralOf(field),
+    notNull: !nullable && !hasFallback,
+    defaultLiteral: hasFallback ? undefined : defaultLiteralOf(field),
     primaryKey: false,
   }
 }
@@ -154,14 +159,13 @@ export const createUniqueIndex = (entity: EntityEntry): ReadonlyArray<string> =>
  * because existing rows need a value.
  */
 export const addColumn = (entity: EntityEntry, field: FieldEntry): string => {
-  const spec = specOf(field)
-  if (spec.notNull && spec.defaultLiteral === undefined) {
+  if (!columnType(field).nullable && defaultLiteralOf(field) === undefined) {
     throw new Error(
       `schema ddl: '${entity.table}.${field.column}' requires a default because the column ` +
         `is nonnullable and the table already exists. Use \`withDefault\` or make the field nullable.`,
     )
   }
-  return `ALTER TABLE ${entity.table} ADD COLUMN ${renderColumn(spec)}`
+  return `ALTER TABLE ${entity.table} ADD COLUMN ${renderColumn(specOf(field))}`
 }
 
 // --- DDL derivation ---
