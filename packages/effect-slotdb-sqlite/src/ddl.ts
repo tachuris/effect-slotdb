@@ -194,6 +194,19 @@ export const deriveMigrations = (chain: readonly Migration[]): ReadonlyArray<Der
         created.push(createTable(entity), ...createKeyIndex(entity), ...createUniqueIndex(entity))
         continue
       }
+      for (const id of entity.retiredFields) {
+        if (previous.retiredFields.has(id)) continue
+        const source = previous.fieldsById.get(id)
+        if (source === undefined) continue
+        const spec = specOf(source)
+        if (spec.notNull && spec.defaultLiteral === undefined) {
+          throw new Error(
+            `schema ddl: retiring '${entity.table}.${source.column}' leaves a NOT NULL column ` +
+              `without a default. Declare a source column default with \`withDefault\` before ` +
+              `retiring the field, or make the source nullable. A replacement default does not fill the source column.`,
+          )
+        }
+      }
       for (const field of entity.columnFields) {
         if (previous.fieldsById.has(field.id)) {
           continue

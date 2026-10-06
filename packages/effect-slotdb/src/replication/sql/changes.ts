@@ -85,7 +85,11 @@ export const changesSince = (
         LIMIT
           1
       `
-      if (rows.length === 0) continue
+      if (rows.length === 0) {
+        const stored = yield* overflowValue(sql, stamp.entityId, stamp.rowId, stamp.fieldId)
+        if (stored !== undefined) changes.push(Change.make({ ...base, value: stored }))
+        continue
+      }
       changes.push(Change.make({ ...base, value: rows[0][field.column] ?? null }))
     }
     return { changes, cursor }

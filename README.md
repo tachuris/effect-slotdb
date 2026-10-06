@@ -23,6 +23,12 @@ A replicated store for [Effect](https://effect.website) with a SQLite implementa
 - `./artifact`: renders committed migration SQL.
 - `./testing`: provides an in memory SQLite store with the fixture chain applied.
 
+## Required columns and retypes
+
+SQLite retains a retired column's `NOT NULL` constraint. DDL derivation rejects retirement of a required column without a source default, including retirement through `retype` or `remove`. A replacement column's default cannot fill the source column. Declare `withDefault` on a required field when creating its column, or declare a nullable source. Do not edit an applied migration to add a default.
+
+Replication retains an incomplete row's accepted values and stamps in overflow when the physical table requires a missing column. The peer relays the pending values and continues to apply other rows. The row stays absent from reads until the peer receives enough values to insert it. Later pages merge against the pending values before creating the row.
+
 ## Example apps
 
 The `examples/` directory demonstrates migration, row operations, and replication:

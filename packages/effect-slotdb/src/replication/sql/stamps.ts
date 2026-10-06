@@ -3,7 +3,7 @@ import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import { SqlClient } from 'effect/sql'
 import { Change, type ChangeBatch, encodeHlcColumn, Hlc, HlcColumn } from '../../changes'
-import { EntityEntry, STAMPS_TABLE } from '../../migration'
+import { EntityEntry, OVERFLOW_TABLE, STAMPS_TABLE } from '../../migration'
 import { mapStorageErrorMessage, StorageError } from '../../errors.ts'
 
 /** Stores one HLC stamp per replicated slot for comparing incoming writes. */
@@ -111,6 +111,18 @@ export const stampChanges = (
       }
       yield* putHlc(sql, entity.id, rowId, field.id, hlc)
       changes.push(Change.make({ entityId: entity.id, rowId, fieldId: field.id, value, hlc }))
+    }
+    if (changes.length > 0) {
+      yield* sql`
+        DELETE FROM ${sql(OVERFLOW_TABLE)}
+        WHERE
+          entityId = ${entity.id}
+          AND rowId = ${rowId}
+          AND ${sql.in(
+            'fieldId',
+            changes.map(change => change.fieldId),
+          )}
+      `.pipe(mapStorageErrorMessage('Failed to clear a replaced pending value'))
     }
     return changes
   })
